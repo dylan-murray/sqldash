@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Runs the jobs in .github/workflows/ci.yml on this machine, so a PR can be checked
+# Runs the jobs in .github/workflows/tests.yml on this machine, so a PR can be checked
 # without GitHub Actions minutes. It tests what CI tests: the PR head merged into
 # the current origin/main, in a throwaway worktree, never the checkout you are in.
 #
 #   scripts/ci_local.sh                 # the current branch, merged into origin/main
 #   scripts/ci_local.sh 742             # PR #742
-#   scripts/ci_local.sh 742 --quick     # Python 3.12 only (the job that runs browsers)
+#   scripts/ci_local.sh 742 --quick     # lint, Python 3.12 (the job that runs browsers), no extras
 #   scripts/ci_local.sh 742 --report    # also post a "local-ci" commit status on the PR
 #   scripts/ci_local.sh 742 --trust-fork  # run a PR from a fork, after reading its diff
 #
@@ -143,14 +143,20 @@ pytest_with_rerun() {
   echo "FLAKY: $failed"
 }
 
+lint() {
+  export UV_PROJECT_ENVIRONMENT="$venvs/noextras"
+  unset VIRTUAL_ENV
+  uv sync -q &&
+    uv run ruff check sqldash tests &&
+    uv run ruff format --check sqldash tests
+}
+
 tests_locked() {
   local py="$1" env="$venvs/py$1"
   export UV_PROJECT_ENVIRONMENT="$env"
   unset VIRTUAL_ENV
   uv sync -q --all-extras --python "$py" &&
     { [ "$py" != 3.12 ] || uv run playwright install chromium >/dev/null; } &&
-    uv run ruff check sqldash tests &&
-    uv run ruff format --check sqldash tests &&
     node --test tests/*.mjs &&
     pytest_with_rerun mysql &&
     uv run sqldash lint examples --strict &&
@@ -168,16 +174,23 @@ install_check() {
   ./scripts/check_install.sh
 }
 
-for py in "${pythons[@]}"; do
-  run "tests (locked deps) ($py)" tests_locked "$py"
-done
-run "tests (no extras)" tests_no_extras
-[ "$quick" = 1 ] || run "pip install (fresh deps, no lockfile)" install_check
+# Every test job needs lint, as in tests.yml: a lint failure skips them.
+run "lint" lint
+if [ "$failed" = 1 ]; then
+  results+=("skip  every test job, because lint failed")
+  echo "${results[${#results[@]}-1]}"
+else
+  for py in "${pythons[@]}"; do
+    run "test ($py)" tests_locked "$py"
+  done
+  run "test (no extras)" tests_no_extras
+  [ "$quick" = 1 ] || run "test (pip install, fresh deps)" install_check
+fi
 
 echo
 printf '%s\n' "${results[@]}"
 if [ "$failed" = 0 ]; then state=success; summary="all ${#results[@]} jobs passed"; else state=failure; summary="a job failed"; fi
-[ "$quick" = 1 ] && summary="$summary (quick: 3.12 only)"
+[ "$quick" = 1 ] && summary="$summary (quick: lint, 3.12, no extras)"
 echo "$label: $summary"
 [ "$failed" = 1 ] && keep_logs=1 && echo "logs kept for the failure: $logs"
 
