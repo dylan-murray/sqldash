@@ -539,7 +539,7 @@ async def dashboard_page(request: Request, name: str):
     payload = script_json(data)
     style = dashboard.page_style()
     dash_css = style.dashboard.replace("</", "<\\/") if style.dashboard else None
-    dash_page = style.page
+    dash_page = style.page.replace("</", "<\\/") if style.page else None
     return request.app.state.templates.TemplateResponse(
         request,
         "dashboard.html",

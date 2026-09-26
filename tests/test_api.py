@@ -23,7 +23,7 @@ from sqldash import workspace
 from sqldash.api import routes_pages
 from sqldash.api.helpers import StrictBody
 from sqldash.csv_safe import spreadsheet_safe
-from sqldash.models.dashboard import PAGE_SELECTOR, split_page_tokens
+from sqldash.models.dashboard import PAGE_SELECTOR, Dashboard, PageStyle, split_page_tokens
 from sqldash.scaffold import create_demo
 from sqldash.server import (
     app_stylesheets,
@@ -4285,3 +4285,15 @@ def test_every_json_request_body_model_is_strict():
                     models[param.field_info.annotation.__name__] = param.field_info.annotation
     assert {"RepoRequest", "RunRequest", "SessionRequest", "AgentEntrypoint"} <= set(models)
     assert [name for name, model in models.items() if not issubclass(model, StrictBody)] == []
+
+
+def test_page_style_block_cannot_close_its_style_tag(client, monkeypatch):
+    """The page block is rendered raw into <style>. Its value check keeps `</` out
+    today; the render escapes it anyway, as it already does for the dashboard block."""
+    hostile = ":root { --page: red; }</style><b id=injected>x</b><style>"
+    monkeypatch.setattr(
+        Dashboard, "page_style", lambda self: PageStyle(page=hostile, dashboard=None, dropped=())
+    )
+    page = client.get("/d/demo").text
+    block = page.split('<style id="dash-page">', 1)[1].split("</style>", 1)[0]
+    assert block == hostile.replace("</", "<\\/")
