@@ -214,6 +214,8 @@ def prepare_project(work):
     metrics_path = project / "metrics.yaml"
     metrics = yaml.load(metrics_path.read_text())
     with duckdb.connect(str(project / "studio.duckdb")) as connection:
+        # semgrep: the SQL is this repo's own example relation
+        # nosemgrep: sqlalchemy-execute-raw-query
         connection.execute("CREATE TABLE orders AS " + metrics["relations"]["orders"]["sql"])
     metrics["relations"]["orders"] = {"table": "orders"}
     for path in sorted(project.glob("*.yaml")):

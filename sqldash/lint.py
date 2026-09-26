@@ -1163,6 +1163,8 @@ def _probe_sql_tools(registry: ExecutionRegistry, agents: AgentLayer) -> list[st
                     errors.append(f"tool '{name}': could not bind SQL: {exc}")
                     continue
                 try:
+                    # semgrep: probing the author's own SQL is what lint does; values stay bound
+                    # nosemgrep: sqlalchemy-execute-raw-query
                     connector.execute(
                         f"SELECT * FROM ({bound}) sqldash_probe WHERE 1 = 0",
                         bind,
@@ -1267,6 +1269,8 @@ def _probe_project_metrics(
                     errors.append(f"metric '{name}': does not compile: {exc}")
                     continue
                 try:
+                    # semgrep: probing the author's own SQL is what lint does; values stay bound
+                    # nosemgrep: sqlalchemy-execute-raw-query
                     connector.execute(
                         f"SELECT * FROM ({bound.sql}) sqldash_probe WHERE 1 = 0",
                         bound.bind,
@@ -1427,6 +1431,8 @@ def _schema_findings(registry, source, base_dir, metrics, relations) -> tuple[bo
             def probe(sql: str) -> set[str] | None:
                 if sql not in sql_columns:
                     try:
+                        # semgrep: probing the author's own SQL is what lint does; values stay bound
+                        # nosemgrep: sqlalchemy-execute-raw-query
                         result = connector.execute(
                             f"SELECT * FROM ({sql}) sqldash_probe WHERE 1 = 0",
                             [],
@@ -1461,6 +1467,8 @@ def _probe_compiled(registry, source, base_dir, compiled: dict[str, str]) -> lis
         with registry.connection(source, base_dir) as connector:
             for metric_name, sql in compiled.items():
                 try:
+                    # semgrep: probing the author's own SQL is what lint does; values stay bound
+                    # nosemgrep: sqlalchemy-execute-raw-query
                     connector.execute(
                         f"SELECT * FROM ({sql}) sqldash_probe WHERE 1 = 0", [], 1, CancelToken()
                     )
@@ -1717,6 +1725,8 @@ def _dry_run_queries(registry, dashboard, base_dir) -> tuple[dict, list[str], di
             bound, bind = bind_sql(sql_text, sql_values, paramstyle)
             try:
                 with registry.connection(source, base_dir) as connector:
+                    # semgrep: probing the author's own SQL is what lint does; values stay bound
+                    # nosemgrep: sqlalchemy-execute-raw-query
                     probe = connector.execute(
                         f"SELECT * FROM ({bound}) sqldash_probe WHERE 1 = 0",
                         bind,
@@ -1775,6 +1785,8 @@ def _options_sql_errors(registry, dashboard, base_dir) -> list[str]:
         try:
             bound, bind = bind_sql(f.options_sql, {}, paramstyle_for(dashboard.source))
             with registry.connection(dashboard.source, base_dir) as connector:
+                # semgrep: probing the author's own SQL is what lint does; values stay bound
+                # nosemgrep: sqlalchemy-execute-raw-query
                 connector.execute(
                     f"SELECT * FROM ({bound}) sqldash_probe WHERE 1 = 0",
                     bind,

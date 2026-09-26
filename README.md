@@ -8,7 +8,9 @@
 </h4>
 
 <p align="center">
-  <a href="https://github.com/dylan-murray/sqldash/actions/workflows/ci.yml"><img src="https://github.com/dylan-murray/sqldash/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/dylan-murray/sqldash/actions/workflows/tests.yml"><img src="https://github.com/dylan-murray/sqldash/actions/workflows/tests.yml/badge.svg?branch=main" alt="Lint &amp; Test"></a>
+  <a href="https://github.com/dylan-murray/sqldash/actions/workflows/codeql.yml"><img src="https://github.com/dylan-murray/sqldash/actions/workflows/codeql.yml/badge.svg?branch=main" alt="CodeQL"></a>
+  <a href="https://github.com/dylan-murray/sqldash/actions/workflows/semgrep.yml"><img src="https://github.com/dylan-murray/sqldash/actions/workflows/semgrep.yml/badge.svg?branch=main" alt="Semgrep"></a>
   <a href="https://github.com/dylan-murray/sqldash/blob/main/pyproject.toml"><img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="License: Apache 2.0"></a>
 </p>

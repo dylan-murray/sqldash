@@ -2,6 +2,8 @@
     resolution is exactly what refuses it. A link would promise a destination
     that answers 404, so the flagged row is rendered inert. -#}
 {% set tag = "div" if m.ambiguous_with else "a" %}
+{#- semgrep: tag is the literal div or a set above #}
+{#- nosemgrep: no-interpolation-in-tag #}
 <{{ tag }} class="drow{% if m.ambiguous_with %} drow-inert{% endif %}"{% if not m.ambiguous_with %} href="/m/{{ m.name }}"{% endif %}{% if m.description %} title="{{ m.description }}"{% endif %} data-search="{{ m.title|lower }} {{ m.name|lower }} {{ (m.description or '')|lower }}{% if m.ambiguous_with %} ambiguous {{ m.ambiguous_with|join(' ')|lower }}{% endif %}">
   <svg class="row-ico row-ico-metric" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
   <span class="row-title">{{ m.title }}</span>

@@ -166,6 +166,8 @@ def install_role(engine, source):
                         record.info["sqldash_role"] = cursor.fetchone()[0]
                     target = record.info["sqldash_role"]
                 if target:
+                    # semgrep: roles cannot be bound; quote() escapes them as identifiers
+                    # nosemgrep: formatted-sql-query, sqlalchemy-execute-raw-query
                     cursor.execute(f"USE ROLE {quote(target)}")
                 if secondary_off:
                     cursor.execute(SNOWFLAKE_SECONDARY_OFF)
@@ -177,15 +179,23 @@ def install_role(engine, source):
                         cursor.execute("SELECT current_user")
                         record.info["sqldash_role"] = cursor.fetchone()[0]
                     target = record.info["sqldash_role"]
+                # semgrep: roles cannot be bound; quote() escapes them as identifiers
+                # nosemgrep: formatted-sql-query, sqlalchemy-execute-raw-query
                 cursor.execute(f"SET ROLE {quote(target)}")
                 # SET ROLE is transactional; pool rollback must not undo it.
                 connection.commit()
             elif target and kind == "mysql":
                 name, host = mysql_role(target)
+                # semgrep: roles cannot be bound; quote() escapes them as identifiers
+                # nosemgrep: formatted-sql-query, sqlalchemy-execute-raw-query
                 cursor.execute(f"SET ROLE {quote(name)}@{quote(host)}")
             elif target and kind == "mariadb":
+                # semgrep: roles cannot be bound; quote() escapes them as identifiers
+                # nosemgrep: formatted-sql-query, sqlalchemy-execute-raw-query
                 cursor.execute(f"SET ROLE {quote(target)}")
             elif target and kind == "trino":
+                # semgrep: roles cannot be bound; quote() escapes them as identifiers
+                # nosemgrep: formatted-sql-query, sqlalchemy-execute-raw-query
                 cursor.execute(f"SET ROLE {quote(target)}")
                 cursor.fetchall()
         finally:

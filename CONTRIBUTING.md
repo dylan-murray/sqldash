@@ -12,8 +12,16 @@ make lint      # ruff check
 make fmt       # ruff format
 ```
 
-All three must pass before a PR. CI additionally runs the suite on Python
-3.11–3.13 with a live MySQL and headless chromium.
+All three must pass before a PR, along with `uv run ruff format --check sqldash tests`.
+The `Lint & Test` workflow (`.github/workflows/tests.yml`) runs a `lint` job,
+then the suite on Python 3.11 to 3.14 with a live MySQL, Postgres and headless
+chromium (`test (3.x)`), once with no extras installed (`test (no extras)`),
+and once from a fresh `pip install` of the built wheel
+(`test (pip install, fresh deps)`). CodeQL and Semgrep scan every PR too, and a
+Semgrep finding fails the PR. When a finding is a false positive, silence that
+one line with a `nosemgrep: <rule>` comment and a one-line reason above it.
+
+Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Ground rules
 

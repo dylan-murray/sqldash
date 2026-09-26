@@ -10,6 +10,8 @@ handle.setAttribute('role','separator'); handle.setAttribute('aria-label','Resiz
 pane.after(handle);
 bindResize(handle, { axis:'y', initial:() => pane.getBoundingClientRect().height, min:140, max:() => innerHeight - 180, update:height => { pane.style.height = `${height}px`; editor.resize(); } });
 new ResizeObserver(() => editor.resize()).observe(pane);
+// semgrep: the handler checks event.origin and event.source first
+// nosemgrep: insufficient-postmessage-origin-validation
 window.addEventListener('message', event => {
   if (event.origin !== location.origin || event.source !== parent) return;
   if (event.data?.type === 'workspace-open') {
@@ -87,6 +89,8 @@ const save=document.createElement('button');save.className='btn';save.id='worksp
 document.querySelector('.editor-toolbar').append(save);
 const sourcePicker=document.getElementById('source-picker');
 const sources=()=>parent.postMessage({type:'workspace-sources',sources:[...sourcePicker.options].filter(option=>!hasSourceContext(option.value)).map(option=>({value:option.value,label:option.textContent}))},location.origin);
+// semgrep: the handler checks event.origin and event.source first
+// nosemgrep: insufficient-postmessage-origin-validation
 window.addEventListener('message',event=>{
   if(event.origin!==location.origin || event.source!==parent)return;
   if(event.data?.type==='workspace-mode' && ['sql','text','metric'].includes(event.data.mode)) { modeButtons.querySelector(`[data-mode=${event.data.mode}]`).click(); }

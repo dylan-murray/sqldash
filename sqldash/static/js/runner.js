@@ -660,6 +660,8 @@ async function loadFilterOptions() {
         select.dispatchEvent(new Event("change", { bubbles: true }));
       }
     } catch (err) {
+      // semgrep: a console message, not a format string anyone parses
+      // nosemgrep: unsafe-formatstring
       console.warn(`options_sql for filter '${name}' failed:`, err.message);
     }
   }
@@ -722,6 +724,8 @@ export function replaceDashboard(next) {
   pendingParams.clear();
   for (const tile of dashboard.tiles) disposeTile(tile.id);
   for (const key of Object.keys(dashboard)) delete dashboard[key];
+  // semgrep: next.dashboard is this server's own same-origin reply
+  // nosemgrep: insecure-object-assign
   Object.assign(dashboard, next.dashboard);
   setEtag(next.etag);
   if (next.today) serverToday = next.today;
