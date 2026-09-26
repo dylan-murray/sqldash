@@ -1,0 +1,29 @@
+# A .semgrepignore replaces semgrep's built-in ignore list, so its defaults
+# are repeated here first.
+.git
+.svn
+.hg
+_darcs
+CVS
+node_modules/
+build/
+dist/
+vendor/
+.env/
+.venv/
+.tox/
+_opam/
+_build/
+_cargo/
+*.min.js
+.npm/
+.yarn/
+test/
+tests/
+testsuite/
+*_test.go
+.semgrep
+.semgrep_logs/
+
+# Third-party assets vendored verbatim (see sqldash/static/vendor/VERSIONS.md).
+sqldash/static/vendor/

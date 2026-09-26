@@ -286,6 +286,8 @@ function remove(id) {
   if(!tabs.size)create();else if(active===id)select(tabs.keys().next().value);
   persist();
 }
+// semgrep: the handler checks event.origin first
+// nosemgrep: insufficient-postmessage-origin-validation
 window.addEventListener('message',event=>{
   if(event.origin!==location.origin) return;
   const tab=[...tabs.values()].find(item=>item.frame.contentWindow===event.source);if(!tab)return;

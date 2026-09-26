@@ -406,6 +406,8 @@ def run_case(
         try:
             proc = subprocess.run(
                 f"{runner} {shlex.quote(case.question)}",
+                # semgrep: runner is the eval author's command; the question is shlex-quoted
+                # nosemgrep: subprocess-shell-true
                 shell=True,
                 input=case.question,
                 capture_output=True,

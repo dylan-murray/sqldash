@@ -366,6 +366,8 @@ def _confine_duckdb_connection(dbapi_conn, key: str, dirs: tuple[str, ...] | Non
         if dirs is None or not open_access:
             return
         quoted = ", ".join("'" + directory.replace("'", "''") + "'" for directory in dirs)
+        # semgrep: SET cannot take binds; each directory is quote-escaped above
+        # nosemgrep: formatted-sql-query, sqlalchemy-execute-raw-query
         cursor.execute(f"SET allowed_directories=[{quoted}]")
         cursor.execute("SET enable_external_access=false")
     finally:
@@ -493,6 +495,8 @@ def _duckdb_sync_views(dbapi_conn, record_info: dict, base_dir: Path, database: 
         for entry in previous or ():
             name = _duckdb_view_name(Path(entry[0]))
             if name not in current_names:
+                # semgrep: view names are reduced to word characters by _duckdb_view_name
+                # nosemgrep: formatted-sql-query, sqlalchemy-execute-raw-query
                 cursor.execute(f'DROP VIEW IF EXISTS "{name}"')
         for statement in _duckdb_attach_sql(base_dir, database):
             cursor.execute(statement)
