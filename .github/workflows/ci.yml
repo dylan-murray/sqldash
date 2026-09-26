@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: tests (locked deps)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: sqldash_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      SQLDASH_TEST_MYSQL: "1"
+      MYSQL_HOST: 127.0.0.1
+      MYSQL_PORT: "3306"
+      MYSQL_PASSWORD: root
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: uv sync --all-extras
+      # Browser tests skip without a chromium binary. Install it on one
+      # matrix cell only — four jobs all running `install --with-deps`
+      # stampede apt (the flag shells out to apt-get) and some hang
+      # past 40 minutes. ubuntu-24.04 already has the system libs.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        if: matrix.python-version == '3.12'
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+      - name: install chromium
+        if: matrix.python-version == '3.12'
+        timeout-minutes: 3
+        run: uv run playwright install chromium
+      # ubuntu-latest ships postgres but keeps its binaries off PATH, so the
+      # postgres connector tests silently skipped here while passing locally.
+      # printf over the glob rather than `ls`: shellcheck-clean, and identical
+      # output whenever the glob matches. If it ever matched nothing this appends
+      # the literal pattern where the old form appended an empty line — an empty
+      # PATH entry being the worse of the two.
+      - run: printf '%s\n' /usr/lib/postgresql/*/bin | tail -1 >> "$GITHUB_PATH"
+      - run: uv run ruff check sqldash tests
+      - run: uv run ruff format --check sqldash tests
+      - run: node --test tests/*.mjs
+      - run: uv run pytest -q -rs --durations=15
+        timeout-minutes: 15
+      - run: uv run sqldash lint examples --strict
+      - run: uv build
+
+  no-extras:
+    name: tests (no extras)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+      - run: uv sync
+      - run: uv run pytest -q -rs
+        timeout-minutes: 15
+
+  install-check:
+    name: pip install (fresh deps, no lockfile)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+      - run: ./scripts/check_install.sh
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, no-extras, install-check]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: the tag points at a commit on main
+        run: |
+          git fetch -q --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          enable-cache: false
+      - run: uv build
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2

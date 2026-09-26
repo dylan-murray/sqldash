@@ -1,0 +1,175 @@
+/* ---------- local setup panels ---------- */
+
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+.repo-rows { display: flex; flex-direction: column; gap: 2px; }
+.repo-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 4px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--grid-line);
+  min-width: 0;
+}
+.repo-rows > .repo-row:last-of-type { border-bottom: none; }
+.repo-name { font-weight: 590; }
+.repo-where {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink-muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repo-count { color: var(--ink-2); font-size: 12px; white-space: nowrap; }
+.repo-remove {
+  border: none;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  font-size: 12px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  line-height: 1;
+}
+.repo-remove:hover { color: var(--danger); background: var(--danger-soft); }
+.repo-add { display: flex; flex-direction: column; gap: 7px; margin-top: 14px; }
+.repo-add-label {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: color-mix(in srgb, var(--accent), var(--ink-muted) 30%);
+}
+.repo-add-row { display: flex; align-items: stretch; gap: 8px; }
+.repo-add-field {
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(
+      color-mix(in srgb, var(--accent), transparent 93%),
+      color-mix(in srgb, var(--accent), transparent 93%)
+    ) padding-box,
+    linear-gradient(var(--surface), var(--surface)) padding-box,
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent), transparent 45%),
+      color-mix(in srgb, #9085e9, transparent 60%)
+    ) border-box;
+  transition: box-shadow 0.15s var(--ease);
+}
+.repo-add-field:focus-within { box-shadow: var(--focus-ring); }
+.repo-add-prompt {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  translate: 0 -50%;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  pointer-events: none;
+  z-index: 1;
+}
+.repo-add input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 12px 0 30px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  outline: none;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--ink-1);
+}
+.repo-add input[type="text"]:focus {
+  border: none;
+  box-shadow: none;
+  background: transparent;
+}
+.repo-add input[type="text"]::placeholder {
+  color: color-mix(in srgb, var(--accent), transparent 50%);
+}
+.repo-add .btn {
+  height: 34px;
+  border-radius: var(--radius-sm);
+  border-color: color-mix(in srgb, var(--ink-1), transparent 78%);
+  background: var(--surface);
+  color: var(--ink-1);
+}
+.repo-add .btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.repo-add input:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
+.profile-status { font-size: 12px; width: 16px; text-align: center; }
+.profile-status.ok { color: var(--good-text, #2e7d32); }
+.profile-status.missing { color: var(--danger); }
+.profile-snippet { margin: 4px 0 8px 26px; }
+
+/* ---------- settings modal ---------- */
+
+.modal-wide {
+  width: min(680px, calc(100vw - 40px));
+  max-height: 78vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.modal-wide .config-grid > * { min-width: 0; }
+.modal-head { display: flex; align-items: center; justify-content: space-between; }
+.modal-head h2 { margin: 0; }
+.modal-wide .config-grid { grid-template-columns: 1fr; }
+.modal-wide .metric-panel { background: color-mix(in srgb, var(--bg), var(--surface) 45%); }
+
+/* ---------- new-dashboard button (B28: squared, gradient rim + gradient text) ---------- */
+
+.btn-new {
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background:
+    linear-gradient(var(--surface-raised), var(--surface-raised)) padding-box,
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent), transparent 74%),
+      color-mix(in srgb, #9085e9, transparent 80%)
+    ) border-box;
+}
+.btn-new span {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent), var(--ink-2) 58%),
+    color-mix(in srgb, #9085e9, var(--ink-2) 52%)
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-weight: 600;
+}
+.btn-new:hover {
+  background:
+    linear-gradient(color-mix(in srgb, var(--surface-raised), var(--accent) 4%),
+      color-mix(in srgb, var(--surface-raised), var(--accent) 4%)) padding-box,
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent), transparent 45%),
+      color-mix(in srgb, #9085e9, transparent 58%)
+    ) border-box;
+}
+.btn-new:hover span {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent), var(--ink-1) 40%),
+    color-mix(in srgb, #9085e9, var(--ink-1) 35%)
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+}

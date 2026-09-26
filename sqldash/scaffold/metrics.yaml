@@ -1,0 +1,67 @@
+# The semantic layer — the canonical definitions of this project's key metrics.
+# Dashboards reference these by name (tile `metric: revenue`) and agents
+# discover and query them via `sqldash mcp`.
+source:
+  type: duckdb
+  attach_files: true
+
+relations:
+  orders: {table: orders}
+
+metrics:
+  revenue:
+    title: Revenue
+    description: Total order revenue in USD
+    relation: orders
+    expr: SUM(amount)
+    format: currency
+    synonyms: [sales, turnover]
+    time_dimension: {name: order_date, grain: day}
+    dimensions:
+      - {name: region, description: "Sales region (us, eu, apac)"}
+      - {name: category, description: Product category}
+
+  order_count:
+    title: Orders
+    description: Number of orders placed
+    relation: orders
+    expr: COUNT(*)
+    format: compact
+    time_dimension: {name: order_date, grain: day}
+    dimensions:
+      - {name: region}
+      - {name: category}
+
+  avg_order_value:
+    title: Average order value
+    description: Revenue per order — a derived ratio of two governed metrics
+    derived: "ROUND({revenue} / NULLIF({order_count}, 0), 2)"
+    format: currency
+    time_dimension: {name: order_date, grain: day}
+    dimensions:
+      - {name: region}
+      - {name: category}
+
+  cumulative_revenue:
+    title: Cumulative revenue
+    description: Running total of revenue over time — a windowed metric
+    relation: orders
+    expr: SUM(amount)
+    cumulative: true
+    format: currency
+    time_dimension: {name: order_date, grain: day}
+    dimensions:
+      - {name: region}
+      - {name: category}
+
+  trailing_28d_revenue:
+    title: Trailing 28-day revenue
+    description: Sum of revenue over the last 28 days, per time bucket
+    relation: orders
+    expr: SUM(amount)
+    window: 28 days
+    format: currency
+    time_dimension: {name: order_date, grain: day}
+    dimensions:
+      - {name: region}
+      - {name: category}

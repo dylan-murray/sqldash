@@ -1,0 +1,70 @@
+# Demo dashboard — everything sqldash needs is in this one file.
+# Tiles flow in file order (no coordinates needed); `size: WxH` hints the grid
+# footprint, and dragging in the UI pins exact positions back into this file.
+title: Order Analytics
+description: Demo dashboard over a local CSV — swap the source for your warehouse.
+
+source: {type: duckdb, attach_files: true}
+
+filters:
+  - {name: dates, type: daterange, label: Date range, default: last_60_days}
+  - name: region
+    type: select
+    label: Region
+    options_sql: "SELECT DISTINCT region FROM orders ORDER BY region"
+
+tiles:
+  # The first three tiles use the semantic layer (see metrics.yaml)
+  - title: Total revenue
+    metric: revenue
+    size: 6x2
+    compare: previous_period
+
+  - title: Orders
+    metric: order_count
+    size: 6x2
+
+  - title: Daily revenue
+    metric: revenue
+    grain: day
+    size: 6x4
+
+  - title: Revenue by category
+    chart: bar
+    format: currency
+    size: 6x4
+    sql: |
+      SELECT category, ROUND(SUM(amount), 2) AS revenue
+      FROM orders
+      WHERE order_date BETWEEN {{ dates_start }} AND {{ dates_end }}
+        {% if region %}AND region = {{ region }}{% endif %}
+      GROUP BY 1
+      ORDER BY 2 DESC
+
+  - title: Revenue share by region
+    chart: pie
+    format: currency
+    size: 6x4
+    sql: |
+      SELECT region, ROUND(SUM(amount), 2) AS revenue
+      FROM orders
+      WHERE order_date BETWEEN {{ dates_start }} AND {{ dates_end }}
+      GROUP BY 1
+      ORDER BY 2 DESC
+
+  - title: Recent orders
+    chart: table
+    size: 6x4
+    sql: |
+      SELECT order_date, region, category, amount
+      FROM orders
+      WHERE order_date BETWEEN {{ dates_start }} AND {{ dates_end }}
+        {% if region %}AND region = {{ region }}{% endif %}
+      ORDER BY order_date DESC, amount DESC
+      LIMIT 100
+
+  - size: 12x2
+    markdown: |
+      **This whole dashboard is one YAML file.** Edit `demo.yaml` — the queries,
+      the charts, the layout — and refresh. Point `source:` at Snowflake or
+      Postgres to use your own data.

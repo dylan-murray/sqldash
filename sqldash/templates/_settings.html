@@ -1,0 +1,68 @@
+    <div class="modal-head">
+      <h2>Local setup</h2>
+      <button type="button" class="icon-btn" id="settings-close" aria-label="Close">✕</button>
+    </div>
+    <p>This machine's config — the workspace registry and credential profiles. Never part of the served repos.</p>
+<div class="config-grid">
+  <section class="metric-panel">
+    <h2>Workspace repos</h2>
+    <div class="repo-rows">
+      {% if not workspace_mode %}
+      <div class="repo-row">
+        <span class="repo-dot on"></span>
+        <span class="repo-name">{{ serve_label.rstrip("/").split("/")[-1] }}</span>
+        <span class="repo-where">{{ serve_label }}</span>
+        <span class="repo-count">serving</span>
+      </div>
+      {% endif %}
+      {% for r in repo_rows %}
+      <div class="repo-row">
+        <span class="repo-dot{{ " on" if r.served }}"></span>
+        <span class="repo-name">{{ r.name }}</span>
+        <span class="repo-where">{{ r.url or r.path }}{% if r.branch %} · {{ r.branch }}{% endif %}</span>
+        {% if r.served %}
+        <span class="repo-count">{{ r.dashboards }} dashboard{{ "s" if r.dashboards != 1 }}</span>
+        {% else %}
+        <span class="repo-count">registered</span>
+        {% endif %}
+        <button type="button" class="repo-remove" data-name="{{ r.name }}" title="{{ "Stop serving and unregister" if r.served else "Remove from the registry" }}" aria-label="Remove {{ r.name }}">✕</button>
+      </div>
+      {% endfor %}
+    </div>
+    {% if not workspace_mode %}
+    <p class="quiet">{% if repo_rows %}Registered repos serve together when you run <code>sqldash serve</code> with no target.{% else %}Register more repos and <code>sqldash serve</code> with no target serves them all at once.{% endif %}</p>
+    {% endif %}
+    <form class="repo-add" id="repo-add-form">
+      <label class="repo-add-label" for="repo-add-target"># add a repo — git URL or local path</label>
+      <div class="repo-add-row">
+        <span class="repo-add-field">
+          <span class="repo-add-prompt">❯</span>
+          <input type="text" id="repo-add-target" placeholder="git@github.com:acme/dashboards.git" autocomplete="off" spellcheck="false" required>
+        </span>
+        <button type="submit" class="btn btn-ghost">Add repo</button>
+      </div>
+    </form>
+    <div class="modal-error" id="repo-error" hidden></div>
+  </section>
+  <section class="metric-panel">
+    <h2>Credential profiles</h2>
+    <p class="quiet">Read-only — profiles hold credentials, so they're edited in the file ({{ profiles_path }}), never the browser.</p>
+    <div class="repo-rows">
+      {% if not profile_rows %}
+      <div class="repo-row"><span class="repo-where">No served source references a profile.</span></div>
+      {% endif %}
+      {% for p in profile_rows %}
+      <div class="repo-row">
+        <span class="profile-status {{ 'ok' if p.defined else 'missing' }}">{{ "✓" if p.defined else "✕" }}</span>
+        <span class="repo-name">{{ p.profile }}</span>
+        <span class="repo-where">{{ "defined on this machine" if p.defined else "not defined on this machine" }} · used by {{ p.referenced_by | join(", ") }}</span>
+      </div>
+      {% if not p.defined %}
+      <pre class="usage profile-snippet"><code># add to {{ profiles_path }}
+{{ p.profile }}:
+  username: you@example.com
+  authentication: externalbrowser   # or password: / token:</code></pre>
+      {% endif %}
+      {% endfor %}
+    </div>
+  </section>

@@ -1,0 +1,69 @@
+title: Electric citrus
+description: High voltage. Clear signals. Same governed metrics.
+source: {type: duckdb, database: ':memory:'}
+layout: {row_height: 84}
+filters:
+  - {name: dates, type: daterange, label: Period, default: last_30_days}
+  - {name: region, type: select, label: Region, options: [Americas, Europe, Asia Pacific]}
+  - {name: channel, type: select, label: Channel, options: [Organic, Paid search, Email, Referral]}
+tiles:
+  - {id: revenue, title: Revenue, metric: revenue, compare: previous_period, size: 3x2}
+  - {id: orders, title: Orders, metric: order_count, compare: previous_period, size: 3x2}
+  - {id: aov, title: Average order value, metric: avg_order_value, size: 3x2}
+  - {id: customers, title: Customers, metric: customers, compare: previous_period, size: 3x2}
+  - id: trend
+    title: Revenue trajectory
+    metric: {name: revenue, grain: day}
+    compare: previous_period
+    chart: area
+    size: 8x3
+  - id: categories
+    title: Revenue by category
+    metric: {name: revenue, dimensions: [category]}
+    chart: bar
+    size: 4x3
+  - id: channels
+    title: Revenue share by channel
+    metric: {name: revenue, dimensions: [channel]}
+    chart: pie
+    size: 4x3
+  - id: products
+    title: Revenue by product
+    metric: {name: revenue, dimensions: [product, category]}
+    chart: table
+    size: 8x3
+
+css: |
+  --page: #10140c;
+  --page-glow: linear-gradient(135deg, #a4b91b18, transparent 50%);
+  --glass: #10140cd9;
+  --surface: #141a11;
+  --surface-raised: #232c17;
+  --ink-1: #f2f7dd;
+  --ink-2: #c0c8ab;
+  --ink-muted: #a1aa88;
+  --border: #b7d25844;
+  --border-strong: #c4f23866;
+  --accent: #d6ff46;
+  .dash-head { padding: 10px 6px 24px; }
+  #dash-title { font-size: clamp(25px, 3vw, 42px); letter-spacing: -.055em; font-weight: 750; }
+  .dash-head-text p { max-width: 550px; line-height: 1.6; }
+  .tile { transition: transform .25s, box-shadow .25s; }
+  .tile:hover { transform: translateY(-3px); }
+  .tile-head { padding: 18px 20px 0; }
+  .tile-head h3 { letter-spacing: .1em; font-size: 10px; }
+  .big-number { padding: 0 12px; }
+  .big-number .value { font-weight: 650; letter-spacing: -.055em; }
+  @media (prefers-reduced-motion: reduce) { .tile { transition: none; } }
+
+  #dash-title { text-transform: uppercase; font-weight: 850; font-style: italic; color: #d6ff46; }
+  .dash-title-row { border-left: 5px solid #d6ff46; padding-left: 18px; }
+  .tile { border: 1px solid #75824a; border-radius: 3px; background: #171d12; box-shadow: 6px 6px 0 #0008; }
+  .tile::before { display: none; }
+  .tile-head h3 { font-family: var(--mono); color: #c9e58c; }
+  .tile[data-tile-id=revenue] { background: #d6ff46; border-color: #d6ff46; --ink-1: #182006; --ink-2: #30421b; --ink-muted: #3c501b; --good-text: #244100; }
+  .tile[data-tile-id=revenue] .value, .tile[data-tile-id=revenue] h3 { color: #172100; }
+  .tile[data-tile-id=orders] .value { color: #d6ff46; }
+  .tile[data-tile-id=aov] .value { color: #ffcf63; }
+  .chart-mount { filter: hue-rotate(220deg) saturate(1.4); }
+  .tile[data-tile-id=categories] .chart-mount { filter: hue-rotate(75deg) saturate(1.5); }

@@ -1,0 +1,8 @@
+<div class="drow drow-bad" title="{{ e.error }}" data-search="{{ e.file|lower }} metrics semantic layer invalid error">
+  <svg class="row-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>
+  <span class="row-error">{{ e.error }} (fix the file or run <code>sqldash lint</code>)</span>
+  <span class="row-file">{{ e.file }}</span>
+  <span class="row-tiles"></span>
+  <span class="row-source badge badge-error">error</span>
+  <span class="row-age"></span>
+</div>

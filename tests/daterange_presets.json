@@ -1,0 +1,31 @@
+{
+  "_why": "One corpus, two readers: test_params.py (params.resolve_daterange_preset) and test_period.mjs (presetRange in static/js/period.js). A preset token has to mean the same window on both sides, so a rule added to one and not the other reds CI here (#673, #683).",
+  "cases": [
+    {"today": "2026-09-22", "token": "last_60_days", "preset": "last_60_days", "start": "2026-07-24", "end": "2026-09-22"},
+    {"today": "2026-09-22", "token": "last_30_days", "preset": "last_30_days", "start": "2026-08-23", "end": "2026-09-22"},
+    {"today": "2026-09-22", "token": "last_7_days", "preset": "last_7_days", "start": "2026-09-15", "end": "2026-09-22"},
+    {"today": "2026-09-22", "token": "last_0_days", "preset": "last_0_days", "start": "2026-09-22", "end": "2026-09-22"},
+    {"today": "2026-01-05", "token": "last_30_days", "preset": "last_30_days", "start": "2025-12-06", "end": "2026-01-05"},
+    {"today": "2024-03-01", "token": "last_1_days", "preset": "last_1_days", "start": "2024-02-29", "end": "2024-03-01"},
+    {"today": "2026-03-08", "token": "last_1_days", "preset": "last_1_days", "start": "2026-03-07", "end": "2026-03-08"},
+    {"today": "2026-11-01", "token": "last_1_days", "preset": "last_1_days", "start": "2026-10-31", "end": "2026-11-01"},
+    {"today": "2026-09-22", "token": "-30d", "preset": "last_30_days", "start": "2026-08-23", "end": "2026-09-22"},
+    {"today": "2026-09-22", "token": "-2w", "preset": "last_14_days", "start": "2026-09-08", "end": "2026-09-22"},
+    {"today": "2026-09-22", "token": "-3m", "preset": "last_90_days", "start": "2026-06-24", "end": "2026-09-22"},
+    {"today": "2026-09-22", "token": "-1y", "preset": "last_365_days", "start": "2025-09-22", "end": "2026-09-22"},
+    {"today": "2026-09-22", "token": "month_to_date", "preset": "month_to_date", "start": "2026-09-01", "end": "2026-09-22"},
+    {"today": "2026-09-01", "token": "month_to_date", "preset": "month_to_date", "start": "2026-09-01", "end": "2026-09-01"},
+    {"today": "2026-09-22", "token": "mtd", "preset": "month_to_date", "start": "2026-09-01", "end": "2026-09-22"},
+    {"today": "2026-09-22", "token": " mtd ", "preset": "month_to_date", "start": "2026-09-01", "end": "2026-09-22"},
+    {"today": "2026-09-22", "token": "year_to_date", "preset": "year_to_date", "start": "2026-01-01", "end": "2026-09-22"},
+    {"today": "2026-01-01", "token": "ytd", "preset": "year_to_date", "start": "2026-01-01", "end": "2026-01-01"},
+    {"today": "2026-09-22", "token": "custom", "preset": null, "start": null, "end": null},
+    {"today": "2026-09-22", "token": "last_week", "preset": null, "start": null, "end": null},
+    {"today": "2026-09-22", "token": "2026-09-01", "preset": null, "start": null, "end": null},
+    {"today": "2026-09-22", "token": "last_739880_days", "preset": "last_739880_days", "start": "0001-01-01", "end": "2026-09-22"},
+    {"today": "2026-09-22", "token": "last_739881_days", "preset": null, "start": null, "end": null},
+    {"today": "2026-09-22", "token": "-3000y", "preset": null, "start": null, "end": null},
+    {"today": "2026-09-22", "token": "-99999999d", "preset": null, "start": null, "end": null},
+    {"today": "2026-09-22", "token": "last_99999999999_days", "preset": null, "start": null, "end": null}
+  ]
+}

@@ -1,0 +1,45 @@
+title: Order Analytics (example)
+description: Every tile is a governed metric from metrics.yaml — no SQL in this file.
+
+source: {type: duckdb, database: ":memory:"}
+
+filters:
+  - {name: region, type: select, options: [us, eu, apac]}
+
+tiles:
+  - title: Revenue
+    metric: revenue
+    size: 4x2
+
+  - title: Orders
+    metric: order_count
+    size: 4x2
+
+  - title: Average order value
+    metric: avg_order_value
+    size: 4x2
+
+  - title: Revenue by day
+    metric: {name: revenue, grain: day}
+    chart: bar
+    size: 6x4
+
+  - title: Cumulative revenue
+    metric: {name: cumulative_revenue, grain: day}
+    chart: area
+    size: 6x4
+
+  - title: Trailing 28-day revenue
+    metric: {name: trailing_28d_revenue, grain: day}
+    chart: area
+    size: 6x4
+
+  - title: Revenue by category
+    metric: {name: revenue, dimensions: [category]}
+    chart: pie
+    size: 6x4
+
+  - title: Revenue by region over time
+    metric: {name: revenue, grain: day, dimensions: [region]}
+    chart: {type: line, group_by: region}
+    size: 6x4

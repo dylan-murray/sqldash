@@ -1,0 +1,31 @@
+{
+  "_why": "One corpus, three readers: test_api.py (spreadsheet_safe in csv_safe.py, the server CSV export), test_cli.py (the same helper in `sqldash query --format csv`) and test_csv_safe.mjs (spreadsheetSafe in static/js/csv-safe.js, the sorted workspace download). A cell one side quotes and another writes raw is a formula that runs when the file is opened in a spreadsheet. Plain numbers stay numbers; digits are ASCII only on every side.",
+  "cases": [
+    {"value": "=HYPERLINK(\"http://example.invalid\",\"x\")", "want": "'=HYPERLINK(\"http://example.invalid\",\"x\")"},
+    {"value": "=head", "want": "'=head"},
+    {"value": "+SUM(1)", "want": "'+SUM(1)"},
+    {"value": "@cmd", "want": "'@cmd"},
+    {"value": "\t=1", "want": "'\t=1"},
+    {"value": "\r=2", "want": "'\r=2"},
+    {"value": "-1+2", "want": "'-1+2"},
+    {"value": "-", "want": "'-"},
+    {"value": "+", "want": "'+"},
+    {"value": "-e5", "want": "'-e5"},
+    {"value": "-١", "want": "'-١"},
+    {"value": "-3.5", "want": "-3.5"},
+    {"value": "-2.25", "want": "-2.25"},
+    {"value": "+7", "want": "+7"},
+    {"value": "-.5", "want": "-.5"},
+    {"value": "-5.", "want": "-5."},
+    {"value": "-1e-3", "want": "-1e-3"},
+    {"value": "1e-3", "want": "1e-3"},
+    {"value": "plain", "want": "plain"},
+    {"value": "a=b", "want": "a=b"},
+    {"value": "# truncated: first 3 rows only", "want": "# truncated: first 3 rows only"},
+    {"value": "", "want": ""},
+    {"value": -3.5, "want": -3.5},
+    {"value": 42, "want": 42},
+    {"value": true, "want": true},
+    {"value": null, "want": null}
+  ]
+}

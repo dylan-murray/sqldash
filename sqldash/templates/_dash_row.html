@@ -1,0 +1,10 @@
+<a class="drow" href="/d/{{ d.name|urlencode }}"{% if d.description %} title="{{ d.description }}"{% endif %} data-search="{{ d.title|lower }} {{ d.name|lower }} {{ (d.description or '')|lower }}">
+  <svg class="row-ico" style="color: var(--series-{{ d.hue }})" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M7 13l3-4 3 2 4-6"/></svg>
+  <span class="row-title">{{ d.title }}</span>
+  <span class="row-spacer"></span>
+  <span class="row-file">{{ d.file }}</span>
+  <span class="row-tiles">{{ d.tile_count }} tile{{ "s" if d.tile_count != 1 }}</span>
+  <span class="row-source">{{ d.source_type }}</span>
+  <span class="row-age">{{ d.age }}</span>
+  <button type="button" class="card-delete row-delete" data-name="{{ d.name }}" data-title="{{ d.title }}" data-etag="{{ d.etag }}" data-file="{{ d.file }}" title="Delete dashboard" aria-label="Delete {{ d.title }}"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
+</a>

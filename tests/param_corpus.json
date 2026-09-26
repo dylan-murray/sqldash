@@ -1,0 +1,32 @@
+{
+  "_why": "One corpus, two readers: test_params.py (params.extract_params) and test_param_names.mjs (paramNamesIn in static/js/params.js). The browser picks which tiles a filter re-runs and which values it posts from this list, so a name one side collects and the other does not is a filter that silently does nothing or wastes a run (#671, #683). Expectations are what the server does: a name inside a comment is not a param, a name inside a string literal still is (lint refuses it by name, #678).",
+  "cases": [
+    {"sql": "SELECT {{ x }}", "names": ["x"]},
+    {"sql": "SELECT * FROM t WHERE a >= {{start}} AND ({{ region }} = 'all' OR r = {{ region }})", "names": ["start", "region"]},
+    {"sql": "SELECT 1 {% if mode %}WHERE x = 1{% endif %}", "names": ["mode"]},
+    {"sql": "SELECT 1 {% if a %}WHERE x = 1{% elif b %}WHERE x = 2{% else %}{% endif %}", "names": ["a", "b"]},
+    {"sql": "SELECT {{ b }} {% if a %}AND {{ b }}{% endif %} {{ a }}", "names": ["b", "a"]},
+    {"sql": "SELECT {{ a }}\n-- {{ region }}", "names": ["a"]},
+    {"sql": "SELECT 1 -- {% if gone %}\n{% if kept %}WHERE 1{% endif %}", "names": ["kept"]},
+    {"sql": "SELECT 1 /* {{ region }} */ , {{ a }}", "names": ["a"]},
+    {"sql": "SELECT 1 /* outer /* inner */ {{ region }} */ , {{ a }}", "names": ["a"]},
+    {"sql": "SELECT 1 -- {{ region }}\r, {{ a }}", "names": ["a"]},
+    {"sql": "SELECT '--', {{ a }}", "names": ["a"]},
+    {"sql": "SELECT '/*', {{ a }}, '*/'", "names": ["a"]},
+    {"sql": "SELECT 'it''s -- not a comment', {{ a }}", "names": ["a"]},
+    {"sql": "SELECT E'\\' -- still a string', {{ a }}", "names": ["a"]},
+    {"sql": "SELECT e'\\'' , {{ a }} -- {{ b }}", "names": ["a"]},
+    {"sql": "SELECT E'a\\'b'\n'-- continued', {{ a }}", "names": ["a"]},
+    {"sql": "SELECT E'a'\n'\\' -- inside the continued string', {{ a }}", "names": ["a"]},
+    {"sql": "SELECT E'a'\n-- {{ b }}\n'x', {{ a }}", "names": ["a"]},
+    {"sql": "SELECT $$ -- $$, {{ a }}", "names": ["a"]},
+    {"sql": "SELECT $tag$ /* $tag$, {{ a }}", "names": ["a"]},
+    {"sql": "SELECT $1, {{ a }} -- {{ b }}", "names": ["a"]},
+    {"sql": "SELECT \"col -- x\", {{ a }}", "names": ["a"]},
+    {"sql": "SELECT category = '{{ region }}'", "names": ["region"]},
+    {"sql": "SELECT 1 /* unterminated {{ a }}", "names": ["a"]},
+    {"sql": "SELECT 'unterminated -- {{ a }}", "names": []},
+    {"sql": "SELECT 1\n-- only a comment names {% elif late %}\n", "names": []},
+    {"sql": "SELECT {{ café }} , {{ a }}", "names": ["a"]}
+  ]
+}

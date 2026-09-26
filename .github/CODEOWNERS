@@ -1,0 +1,11 @@
+* @dylan-murray
+
+/.github/ @dylan-murray
+/.github/workflows/ @dylan-murray
+/.github/scripts/ @dylan-murray
+/.github/CODEOWNERS @dylan-murray
+/scripts/ @dylan-murray
+/CLA.md @dylan-murray
+/SECURITY.md @dylan-murray
+/pyproject.toml @dylan-murray
+/uv.lock @dylan-murray

@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}Dashboards · sqldash{% endblock %}
+{% block actions %}
+<div class="dashboard-actions">
+  {% if dashboards | length == 1 %}
+  <a class="btn btn-ghost" id="home-explore" href="/d/{{ dashboards[0].name|urlencode }}/workspace">+ Explore</a>
+  {% else %}
+  <button class="btn btn-ghost" id="home-explore">+ Explore</button>
+  {% endif %}
+</div>
+{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Dashboards</h1>
+  <p>Serving <code class="serve-path">{{ serve_label }}</code> — every dashboard is a single YAML file.</p>
+</div>
+
+<div class="browser-toolbar">
+  <div class="browser-search">
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.4-3.4"/></svg>
+    <input type="text" id="browser-filter" placeholder="Search dashboards and metrics…" autocomplete="off" spellcheck="false">
+    <kbd>/</kbd>
+  </div>
+  <button class="btn btn-new" id="new-dashboard"><span>+ New dashboard</span></button>
+</div>
+
+{% if dashboards or broken %}
+<div class="browser" id="dash-browser">
+  {% if repos %}
+  {% for repo in repos %}
+  {% set repo_dashboards = dashboards | selectattr("repo", "equalto", repo) | list %}
+  {% set repo_broken = broken | selectattr("repo", "equalto", repo) | list %}
+  {% if repo_dashboards or repo_broken %}
+  {% with group_id = "d:" + repo, group_label = repo,
+          group_count = (repo_dashboards | length + repo_broken | length) ~ " dashboard" ~ ("s" if repo_dashboards | length + repo_broken | length != 1 else "") %}
+  {% include "_folder.html" %}
+  {% endwith %}
+  <div class="dgroup" data-repo-group="d:{{ repo }}">
+    {% for d in repo_dashboards %}{% include "_dash_row.html" %}{% endfor %}
+    {% for b in repo_broken %}{% include "_broken_row.html" %}{% endfor %}
+  </div>
+  {% endif %}
+  {% endfor %}
+  {% else %}
+  {% for d in dashboards %}{% include "_dash_row.html" %}{% endfor %}
+  {% for b in broken %}{% include "_broken_row.html" %}{% endfor %}
+  {% endif %}
+  <div class="browser-empty" id="dash-no-results" hidden>No dashboards match.</div>
+</div>
+{% else %}
+<div class="empty-state">
+  <p>No dashboards found in this directory.</p>
+  <p>Create one with the button above, run <code>sqldash init --demo</code>, or add a <code>*.yaml</code> dashboard file.</p>
+</div>
+{% endif %}
+
+{% if metrics or metric_errors %}
+<div class="page-head section-head">
+  <h1>Metrics</h1>
+  <p>The semantic layer — governed definitions agents can query via <code>sqldash mcp</code>.</p>
+</div>
+<div class="browser" id="metric-browser">
+  {% if repos %}
+  {% for repo in repos %}
+  {% set repo_metrics = metrics | selectattr("repo", "equalto", repo) | list %}
+  {% set repo_metric_errors = metric_errors | selectattr("repo", "equalto", repo) | list %}
+  {% if repo_metrics or repo_metric_errors %}
+  {% with group_id = "m:" + repo, group_label = repo,
+          group_count = (repo_metrics | length) ~ " metric" ~ ("s" if repo_metrics | length != 1 else "") %}
+  {% include "_folder.html" %}
+  {% endwith %}
+  <div class="dgroup" data-repo-group="m:{{ repo }}">
+    {% for e in repo_metric_errors %}{% include "_metric_error_row.html" %}{% endfor %}
+    {% for m in repo_metrics %}{% include "_metric_row.html" %}{% endfor %}
+  </div>
+  {% endif %}
+  {% endfor %}
+  {% else %}
+  {% for e in metric_errors %}{% include "_metric_error_row.html" %}{% endfor %}
+  {% for m in metrics %}{% include "_metric_row.html" %}{% endfor %}
+  {% endif %}
+  <div class="browser-empty" id="metric-no-results" hidden>No metrics match.</div>
+</div>
+{% endif %}
+
+<div class="modal-backdrop" id="delete-modal" hidden>
+  <div class="modal">
+    <h2>Delete dashboard</h2>
+    <p id="delete-message"></p>
+    <div class="modal-error" id="delete-error" hidden></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" id="delete-cancel">Cancel</button>
+      <button type="button" class="btn btn-danger" id="delete-confirm">Delete</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="new-dash-modal" hidden>
+  <form class="modal" id="new-dash-form">
+    <h2>New dashboard</h2>
+    <p>Creates a YAML file in the served directory — commit it like any other code.</p>
+    {% if repos %}
+    <select id="new-dash-repo">
+      {% for repo in repos %}<option value="{{ repo }}">{{ repo }}</option>{% endfor %}
+    </select>
+    {% endif %}
+    <input type="text" id="new-dash-title" placeholder="Dashboard title" autocomplete="off" required>
+    <div class="modal-error" id="new-dash-error" hidden></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" id="new-dash-cancel">Cancel</button>
+      <button type="submit" class="btn btn-primary">Create</button>
+    </div>
+  </form>
+</div>
+{% if dashboards | length > 1 %}
+<dialog class="modal" id="explore-dialog" aria-labelledby="explore-heading">
+  <form method="dialog">
+    <h2 id="explore-heading">Explore data</h2>
+    <p>Choose a dashboard to use its connections and saved queries.</p>
+    <label for="explore-dashboard">Dashboard</label>
+    <select id="explore-dashboard">
+      {% for d in dashboards %}<option value="/d/{{ d.name|urlencode }}/workspace">{{ d.title }}{% if d.repo %} · {{ d.repo }}{% endif %}</option>{% endfor %}
+    </select>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" value="cancel">Cancel</button>
+      <button class="btn btn-primary" id="explore-open" type="button">Explore</button>
+    </div>
+  </form>
+</dialog>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{{ asset_url('js/index.js') }}"></script>
+{% endblock %}

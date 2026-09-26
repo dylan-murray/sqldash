@@ -1,0 +1,13 @@
+{#- An ambiguous name has no page to go to: /m/<name> resolves the metric, and
+    resolution is exactly what refuses it. A link would promise a destination
+    that answers 404, so the flagged row is rendered inert. -#}
+{% set tag = "div" if m.ambiguous_with else "a" %}
+<{{ tag }} class="drow{% if m.ambiguous_with %} drow-inert{% endif %}"{% if not m.ambiguous_with %} href="/m/{{ m.name }}"{% endif %}{% if m.description %} title="{{ m.description }}"{% endif %} data-search="{{ m.title|lower }} {{ m.name|lower }} {{ (m.description or '')|lower }}{% if m.ambiguous_with %} ambiguous {{ m.ambiguous_with|join(' ')|lower }}{% endif %}">
+  <svg class="row-ico row-ico-metric" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+  <span class="row-title">{{ m.title }}</span>
+  <span class="row-spacer"></span>
+  <span class="row-file">{{ m.name.split("/")[-1] }}</span>
+  <span class="row-tiles">{% if m.ambiguous_with %}<span class="row-warn" title="defined inline by {{ m.ambiguous_with|join(', ') }}">ambiguous · {{ m.ambiguous_with | map("replace", "/", " / ") | join(", ") }}</span>{% elif m.origin == "dashboard" %}inline · {{ m.dashboard.split("/")[-1] }}{% endif %}</span>
+  <span class="row-source">{{ m.source_type }}</span>
+  <span class="row-age"></span>
+</{{ tag }}>

@@ -1,0 +1,154 @@
+@font-face {
+  font-family: "Geist Var";
+  src: url("/static/vendor/geist-var.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono Var";
+  src: url("/static/vendor/geist-mono-var.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light;
+  --page: #f4f3ef;
+  --page-glow: none;
+  --surface: #fdfdfc;
+  --surface-raised: #ffffff;
+  --glass: #fdfdfc;
+  --ink-1: #0b0b0b;
+  --ink-2: #52514e;
+  --ink-muted: #898781;
+  --grid-line: #e1e0d9;
+  --baseline: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.08);
+  --border-strong: rgba(11, 11, 11, 0.14);
+  --accent: #2a78d6;
+  --accent-soft: rgba(42, 120, 214, 0.09);
+  --accent-glow: rgba(42, 120, 214, 0.22);
+  --accent-ink: #ffffff;
+  --danger: #d03b3b;
+  --danger-soft: rgba(208, 59, 59, 0.08);
+  --good-text: #006300;
+  --series-1: #2a78d6;
+  --series-2: #008300;
+  --series-3: #e87ba4;
+  --series-4: #eda100;
+  --series-5: #1baf7a;
+  --series-6: #eb6834;
+  --series-7: #4a3aa7;
+  --series-8: #e34948;
+  /* Paper has depth; it just does not glow. Soft neutral elevation, warm-biased
+     to match the ground — zeroing these left cards floating on beige with only
+     a hairline, which reads as unfinished rather than clean. */
+  --shadow-1: 0 1px 2px rgba(24, 22, 16, 0.05), 0 1px 1px rgba(24, 22, 16, 0.04);
+  --shadow-2: 0 1px 2px rgba(24, 22, 16, 0.06), 0 4px 12px rgba(24, 22, 16, 0.06);
+  --shadow-3: 0 2px 4px rgba(24, 22, 16, 0.07), 0 12px 32px rgba(24, 22, 16, 0.12);
+  --modal-shadow: 0 16px 48px rgba(24, 22, 16, 0.18);
+  --blur: none;
+  --blur-tile: none;
+  --blur-scrim: none;
+  --scrim: rgba(11, 11, 11, 0.36);
+  --drawer-scrim: var(--scrim);
+  --drawer-blur: none;
+  --tile-wash: none;
+  /* --tile-rim lives on .tile so --wcolor resolves per tile (see gotchas) */
+  --tile-border: var(--border-strong);
+  --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
+  /* accent glow is a dark-theme technique; light keeps these quiet */
+  --mark-shadow: 0 0 0 1px var(--border);
+  --btn-primary-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), var(--shadow-1);
+  --edit-hover-shadow: 0 0 0 1.5px var(--accent);
+  --radius: 12px;
+  --radius-sm: 8px;
+  --font: "Geist Var", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Geist Mono Var", ui-monospace, "SF Mono", Menlo, monospace;
+  --ease: cubic-bezier(0.25, 0.6, 0.3, 1);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0c0c0d;
+  --page-glow:
+    radial-gradient(1000px 520px at 12% -120px, rgba(57, 135, 229, 0.16), transparent 70%),
+    radial-gradient(900px 620px at 92% 108%, rgba(144, 133, 233, 0.12), transparent 72%),
+    radial-gradient(700px 420px at 75% -60px, rgba(25, 158, 112, 0.07), transparent 70%);
+  --surface: #161617;
+  --surface-raised: #1d1d1f;
+  --glass: rgba(18, 18, 19, 0.78);
+  --ink-1: #f5f5f4;
+  --ink-2: #c3c2b7;
+  --ink-muted: #8a8880;
+  --grid-line: #29292b;
+  --baseline: #3a3a3c;
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --accent: #3987e5;
+  --accent-soft: rgba(57, 135, 229, 0.14);
+  --accent-glow: rgba(57, 135, 229, 0.35);
+  --danger: #e66767;
+  --danger-soft: rgba(230, 103, 103, 0.12);
+  --good-text: #0ca30c;
+  --series-1: #3987e5;
+  --series-2: #008300;
+  --series-3: #d55181;
+  --series-4: #c98500;
+  --series-5: #199e70;
+  --series-6: #d95926;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.45), 0 6px 16px rgba(0, 0, 0, 0.35);
+  --shadow-3: 0 2px 6px rgba(0, 0, 0, 0.5), 0 16px 40px rgba(0, 0, 0, 0.45);
+  --modal-shadow: 0 24px 64px rgba(0, 0, 0, 0.35);
+  --blur: saturate(160%) blur(14px);
+  --blur-tile: blur(12px) saturate(135%);
+  --blur-scrim: blur(3px);
+  --scrim: rgba(6, 7, 9, 0.45);
+  /* drawer kept its pre-token values so this light-mode PR does not
+     darken the dark drawer (modal was already 0.45 / 3px) */
+  --drawer-scrim: rgba(0, 0, 0, 0.28);
+  --drawer-blur: blur(2px);
+  /* --tile-wash/rim/border that reference --wcolor live on .tile below —
+     custom properties resolve nested var() on the element that *defines*
+     them, and --wcolor only exists on .tile, never on :root */
+  --focus-ring: 0 0 0 3px var(--accent-glow);
+  --mark-shadow: 0 0 0 1px var(--border), 0 2px 8px var(--accent-glow);
+  --btn-primary-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 0 12px var(--accent-glow), 0 1px 2px rgba(0, 0, 0, 0.18);
+  --edit-hover-shadow: 0 0 0 1.5px var(--accent), 0 4px 20px var(--accent-glow);
+}
+
+* { box-sizing: border-box; }
+
+[hidden] { display: none !important; }
+
+html { height: 100%; }
+
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--page);
+  background-image: var(--page-glow);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  color: var(--ink-1);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: var(--accent-glow); }
+
+* { scrollbar-width: thin; scrollbar-color: var(--baseline) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: var(--baseline); border-radius: 4px; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }

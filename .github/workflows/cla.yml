@@ -1,0 +1,31 @@
+name: CLA
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  signed:
+    name: contributor has signed CLA.md
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # The checker comes from the base commit, not the PR: a PR that edits
+      # cla_check.sh must not be the one deciding whether it passes.
+      - name: Every author is in the signature table and nothing else in CLA.md changed
+        env:
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git show "$BASE_SHA:.github/scripts/cla_check.sh" > "$RUNNER_TEMP/cla_check.sh"
+          bash "$RUNNER_TEMP/cla_check.sh"

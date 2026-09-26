@@ -1,0 +1,50 @@
+# Order fulfillment: volume and throughput the pipeline has to work through.
+# Same source and filters as demo.yaml, so both dashboards slice identically.
+title: Order Fulfillment
+description: >-
+  Fulfillment workload over the orders relation: volume, value and per-region
+  throughput. NOTE: the source has no ship/delivery/status columns, so these are
+  order-flow proxies, not on-time or cycle-time SLAs.
+
+source: {type: duckdb, attach_files: true}
+
+filters:
+  - {name: dates, type: daterange, label: Date range, default: last_60_days}
+  - name: region
+    type: select
+    label: Region
+    options_sql: "SELECT DISTINCT region FROM orders ORDER BY region"
+
+tiles:
+  - title: Orders to fulfill
+    metric: order_count
+    chart: big_number
+    size: 6x2
+    compare: previous_period
+
+  - title: Fulfilled order value
+    metric: revenue
+    chart: big_number
+    size: 6x2
+    compare: previous_period
+
+  - title: Daily fulfillment volume
+    metric: order_count
+    chart: area
+    grain: day
+    size: 12x4
+
+  - title: Fulfillment by region
+    chart: table
+    size: 12x4
+    sql: |
+      SELECT region,
+             COUNT(*) AS orders,
+             ROUND(SUM(amount), 2) AS order_value,
+             ROUND(AVG(amount), 2) AS avg_order_value,
+             ROUND(COUNT(*) * 1.0 / NULLIF(COUNT(DISTINCT order_date), 0), 1) AS orders_per_active_day
+      FROM orders
+      WHERE order_date BETWEEN {{ dates_start }} AND {{ dates_end }}
+        {% if region %}AND region = {{ region }}{% endif %}
+      GROUP BY 1
+      ORDER BY orders DESC

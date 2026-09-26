@@ -1,0 +1,161 @@
+/* ---------- custom dropdowns ---------- */
+
+.dd { position: relative; display: inline-flex; min-width: 0; }
+.dd > select {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  width: 1px;
+  height: 1px;
+}
+
+.dd-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  height: 34px;
+  padding: 0 15px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--ink-1);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  box-shadow: var(--shadow-1);
+  cursor: pointer;
+  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
+  position: relative;
+  white-space: nowrap;
+}
+.dd-chev {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--ink-muted);
+  border-bottom: 1.5px solid var(--ink-muted);
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+.dd-btn:hover { border-color: var(--baseline); }
+.dd-btn:focus-visible { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
+.dd-btn .dd-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dd-crumb-head { color: var(--ink-muted); }
+.dd-crumb-slash { color: var(--ink-muted); opacity: 0.35; }
+.dd-mono {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dd-ico {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  background: currentColor;
+  opacity: 0.72;
+  -webkit-mask: var(--dd-ico) center / contain no-repeat;
+  mask: var(--dd-ico) center / contain no-repeat;
+}
+.dd[data-icon="file"] {
+  --dd-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5'%3E%3Cpath d='M4 2.5h5.5L12 5v8.5H4z'/%3E%3Cpath d='M9.5 2.5V5H12'/%3E%3C/svg%3E");
+}
+.dd[data-icon="db"] {
+  --dd-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5'%3E%3Cellipse cx='8' cy='4.2' rx='5' ry='2'/%3E%3Cpath d='M3 4.2v7.6c0 1.1 2.2 2 5 2s5-.9 5-2V4.2'/%3E%3C/svg%3E");
+}
+.editor-toolbar .dd[data-skin="chip"] .dd-btn {
+  border-radius: var(--radius-sm);
+  gap: 8px;
+  padding: 0 12px;
+}
+
+.dd-btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  min-width: 0;
+  height: 28px;
+  padding: 0 7px;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 560;
+  letter-spacing: -0.015em;
+  color: var(--ink-2);
+  border-radius: 7px;
+}
+.dd-btn-ghost:hover {
+  color: var(--ink-1);
+  background: color-mix(in srgb, var(--ink-1), transparent 95%);
+  border-color: transparent;
+}
+.dd-btn-ghost .dd-chev,
+.dd-btn-ghost + .dd-chev { opacity: 0.7; }
+.dd-btn-ghost .dd-chev { width: 6px; height: 6px; }
+
+.dd-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  translate: -50% 0;
+  width: max-content;
+  min-width: 100%;
+  max-width: min(360px, calc(100vw - 16px));
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 11px;
+  box-shadow: var(--shadow-3);
+  padding: 4px;
+  z-index: 80;
+  transform-origin: top center;
+  animation: dd-unfold 0.19s var(--ease);
+}
+.dd-menu.dd-open {
+  position: fixed;
+}
+.dd-menu.dd-open:not(.dash-info) {
+  min-width: 0;
+}
+.dd-menu.dd-up { transform-origin: bottom center; }
+@keyframes dd-unfold {
+  from { opacity: 0.4; transform: scaleY(0.4); }
+  to { opacity: 1; transform: none; }
+}
+
+.dd-item {
+  position: relative;
+  padding: 7px 14px 7px 30px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--ink-1);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: dd-item-in 0.19s var(--ease);
+}
+@keyframes dd-item-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.dd-item:hover { background: var(--accent-soft); }
+.dd-item.selected::before {
+  content: "✓";
+  position: absolute;
+  left: 10px;
+  color: var(--accent);
+  font-weight: 620;
+}
+
+.field-inline .dd, .field-inline .dd-btn { width: 100%; min-width: 130px; }
+.field-inline .dd-btn { justify-content: space-between; }
+.editor-toolbar .dd-btn { height: 32px; }
+@media (prefers-reduced-motion: reduce) { .dd-menu { animation: none; } }

@@ -1,0 +1,9 @@
+.venv/
+dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.knowledge
+AGENTS.local.md
+CLAUDE.local.md

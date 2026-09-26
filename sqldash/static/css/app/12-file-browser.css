@@ -1,0 +1,157 @@
+/* ---------- file-browser landing (L3) ---------- */
+
+.browser-toolbar { display: flex; align-items: center; gap: 10px; margin: 18px 0 14px; }
+.browser-search {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 34px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  padding: 0 12px;
+  background: var(--surface);
+  color: var(--ink-muted);
+}
+.browser-search:focus-within { border-color: var(--accent); box-shadow: var(--focus-ring); }
+.browser-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  outline: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink-1);
+}
+.browser-search input::placeholder { color: var(--ink-muted); }
+.browser-search kbd {
+  font-family: var(--mono);
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0 6px;
+  color: var(--ink-muted);
+}
+
+.browser {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+.dfolder {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 9px 16px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--ink-1), transparent 97.5%);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-2);
+  cursor: pointer;
+  text-align: left;
+}
+.dfolder .chev { color: var(--ink-muted); font-size: 10px; transition: transform 0.15s var(--ease); }
+.dfolder[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.dfolder .folder-ico { width: 14px; height: 14px; color: var(--ink-muted); flex-shrink: 0; }
+.dfolder .folder-count { margin-left: auto; color: var(--ink-muted); font-size: 11px; }
+.drow {
+  display: grid;
+  grid-template-columns: 17px auto 1fr 230px 82px 74px 62px 24px;
+  align-items: center;
+  column-gap: 13px;
+  padding: 8px 14px 8px 18px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink-1), transparent 95%);
+  color: inherit;
+  text-decoration: none;
+}
+.drow.alt { background: color-mix(in srgb, var(--ink-1), transparent 98.2%); }
+.drow:hover, .drow.alt:hover {
+  background: color-mix(in srgb, var(--ink-1), transparent 96.5%);
+  text-decoration: none;
+}
+.browser > :last-child, .dgroup > :last-child { border-bottom: none; }
+.dgroup:not(:last-child) > :last-child { border-bottom: 1px solid var(--border); }
+.row-ico { width: 15px; height: 15px; }
+.row-ico-metric { color: var(--accent); }
+.drow-bad .row-ico { color: var(--danger); }
+.row-title {
+  font-size: 13.5px;
+  font-weight: 570;
+  letter-spacing: -0.01em;
+  color: var(--ink-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.drow-bad .row-title { color: var(--danger); }
+.row-file {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+.drow-bad .row-file { text-align: right; }
+.row-error {
+  min-width: 0;
+  grid-column: span 2;
+  color: color-mix(in srgb, var(--danger), var(--ink-muted) 35%);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row-tiles, .row-age {
+  color: var(--ink-muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* min-width:0 so the grid track may shrink, then ellipsize rather than spill:
+   an ambiguity naming repo-qualified dashboards is far longer than the "inline ·
+   name" this column was sized for, and nowrap alone let it run over the source
+   column. The full list stays reachable in the row-warn title. */
+.row-tiles {
+  text-align: right;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* A metric no resolve path will answer to. Muted-danger, matching .row-error,
+   because it is the same kind of fact: this row is not usable as shown. */
+.row-warn { color: color-mix(in srgb, var(--danger), var(--ink-muted) 35%); }
+/* Flagged rows are not links — no page can answer for them — so they must not
+   offer a link's affordances. The title carries the tint because the marker
+   lives in .row-tiles, which the 900px breakpoint hides: without this a narrow
+   screen shows an ordinary-looking row that silently does nothing. Same
+   treatment .drow-bad already gives a row that cannot be opened. */
+.drow-inert { cursor: default; }
+.drow-inert:hover { background: none; }
+.drow-inert .row-title { color: color-mix(in srgb, var(--danger), var(--ink-muted) 35%); }
+.row-source {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.row-source.badge-error { justify-self: start; }
+.row-age { text-align: right; }
+.row-delete {
+  position: static;
+  width: 24px;
+  height: 24px;
+}
+@media (max-width: 900px) {
+  .drow { grid-template-columns: 17px 1fr 74px 24px; }
+  .row-file, .row-spacer, .row-error, .row-tiles, .row-age { display: none; }
+}
+.browser-empty { padding: 26px 16px; text-align: center; color: var(--ink-muted); font-size: 13px; }

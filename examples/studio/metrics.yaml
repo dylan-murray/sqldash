@@ -1,0 +1,55 @@
+source: {type: duckdb, database: ':memory:'}
+
+relations:
+  orders:
+    sql: |
+      SELECT CURRENT_DATE - 119 + CAST(i // 75 AS INTEGER) AS order_date,
+             CASE i % 3 WHEN 0 THEN 'Americas' WHEN 1 THEN 'Europe' ELSE 'Asia Pacific' END AS region,
+             CASE (i * 7) % 4 WHEN 0 THEN 'Organic' WHEN 1 THEN 'Paid search'
+                              WHEN 2 THEN 'Email' ELSE 'Referral' END AS channel,
+             CASE (i * 11) % 5 WHEN 0 THEN 'Outerwear' WHEN 1 THEN 'Footwear' WHEN 2 THEN 'Accessories'
+                               WHEN 3 THEN 'Fitness' ELSE 'Home' END AS category,
+             CASE (i * 11) % 5
+               WHEN 0 THEN (['Trail shell', 'Down parka', 'Rain jacket'])[(i * 13) % 3 + 1]
+               WHEN 1 THEN (['Ridge runner', 'Court classic', 'Slip-on'])[(i * 13) % 3 + 1]
+               WHEN 2 THEN (['Canvas tote', 'Wool beanie', 'Belt bag'])[(i * 13) % 3 + 1]
+               WHEN 3 THEN (['Yoga mat', 'Kettlebell', 'Resistance set'])[(i * 13) % 3 + 1]
+               ELSE (['Ceramic mug', 'Linen throw', 'Desk lamp'])[(i * 13) % 3 + 1] END AS product,
+             1 + (i * 37) % 1400 AS customer_id,
+             ROUND((CASE (i * 11) % 5 WHEN 0 THEN 64 WHEN 1 THEN 42 WHEN 2 THEN 16
+                                      WHEN 3 THEN 25 ELSE 19 END)
+                   * (0.8 + ((i * 29) % 40) / 100.0)
+                   * CASE i % 3 WHEN 0 THEN 1.25 WHEN 1 THEN 1.0 ELSE 0.8 END
+                   * (1 + i / 36000.0 + 0.12 * SIN(i / 210.0)), 2) AS amount
+      FROM range(9000) t(i)
+
+metrics:
+  revenue:
+    title: Revenue
+    description: Order revenue, shared by dashboards, the CLI, and agents.
+    relation: orders
+    expr: SUM(amount)
+    format: currency
+    time_dimension: {name: order_date, grain: day}
+    dimensions: [{name: region}, {name: channel}, {name: category}, {name: product}]
+  order_count:
+    title: Orders
+    relation: orders
+    expr: COUNT(*)
+    format: compact
+    time_dimension: {name: order_date, grain: day}
+    dimensions: [{name: region}, {name: channel}, {name: category}, {name: product}]
+  customers:
+    title: Customers
+    description: Distinct buyers in the period.
+    relation: orders
+    expr: COUNT(DISTINCT customer_id)
+    format: compact
+    time_dimension: {name: order_date, grain: day}
+    dimensions: [{name: region}, {name: channel}, {name: category}]
+  avg_order_value:
+    title: Average order value
+    derived: '{revenue} / NULLIF({order_count}, 0)'
+    format: currency
+    time_dimension: {name: order_date, grain: day}
+    dimensions: [{name: region}, {name: channel}, {name: category}, {name: product}]

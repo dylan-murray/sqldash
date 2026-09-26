@@ -1,0 +1,108 @@
+[project]
+name = "sqldash"
+version = "0.1.0"
+description = "Single-file SQL dashboards. Pure Python, no cloud, no build step."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Dylan Murray" }]
+keywords = [
+    "dashboards", "bi", "sql", "analytics", "semantic-layer", "yaml", "mcp",
+    "duckdb", "snowflake", "postgres", "bigquery", "redshift", "databricks",
+    "athena", "mysql", "trino", "clickhouse",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Database :: Front-Ends",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.9",
+    "typer>=0.15",
+    "ruamel.yaml>=0.18",
+    "watchdog>=5",
+    "platformdirs>=4",
+    "jinja2>=3.1",
+    "duckdb>=1.1",
+    "markdown-it-py>=3",
+    "mcp>=2,<3",
+    "sqlalchemy>=2.0",
+    "duckdb-engine>=0.13",
+    "questionary>=2.1.1",
+]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.2"]
+snowflake = ["snowflake-connector-python[secure-local-storage]>=3.12", "snowflake-sqlalchemy>=1.6"]
+bigquery = ["sqlalchemy-bigquery>=1.11"]
+redshift = ["sqlalchemy-redshift>=0.8", "redshift-connector>=2.1"]
+databricks = ["databricks-sqlalchemy>=2.0"]
+athena = ["pyathena>=3.8"]
+mysql = ["pymysql>=1.1"]
+trino = ["trino>=0.330"]
+clickhouse = ["clickhouse-sqlalchemy>=0.3"]
+lookml = ["lkml>=1.3"]
+snapshot = ["playwright>=1.45"]
+all = ["sqldash[postgres,snowflake,bigquery,redshift,databricks,athena,mysql,trino,clickhouse,lookml,snapshot]"]
+
+[project.urls]
+Homepage = "https://github.com/dylan-murray/sqldash"
+Repository = "https://github.com/dylan-murray/sqldash"
+Issues = "https://github.com/dylan-murray/sqldash/issues"
+
+[project.scripts]
+sqldash = "sqldash.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sqldash"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/sqldash", "/docs", "/examples", "/README.md", "/LICENSE", "/pyproject.toml"]
+
+[dependency-groups]
+dev = [
+    "pillow>=10",
+    "pytest>=8",
+    "httpx>=0.27",
+    "ruff>=0.6",
+    "anyio>=4.14.2",
+    "lkml>=1.3.7",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RUF", "PT", "PLC0415"]
+allowed-confusables = ["×", "❯"]
+
+[tool.ruff.lint.per-file-ignores]
+"sqldash/cli.py" = ["B008", "PLC0415"]
+"tests/*" = ["PLC0415"]
+"scripts/build_agent_demo.py" = ["E501"]
+"scripts/build_how_it_works.py" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["anyio"]
+addopts = ["--strict-markers", "--strict-config"]
+faulthandler_timeout = 120
+filterwarnings = [
+    "error",
+    "ignore::starlette.exceptions.StarletteDeprecationWarning",
+    "ignore:You have an incompatible version of 'pyarrow' installed:UserWarning",
+]

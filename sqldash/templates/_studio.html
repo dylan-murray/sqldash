@@ -1,0 +1,77 @@
+<aside id="studio-panel" class="studio-panel" aria-labelledby="studio-title" hidden>
+  <header class="studio-head">
+    <div><h2 id="studio-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m9 3 2.2 6.8L18 12l-6.8 2.2L9 21l-2.2-6.8L0 12l6.8-2.2L9 3Z" transform="translate(2 0) scale(.9 1)"/><path d="m19 2 .9 2.1L22 5l-2.1.9L19 8l-.9-2.1L16 5l2.1-.9L19 2Z"/></svg><span>AI Studio</span></h2><span class="studio-dashboard-name">{{ dashboard.title }}</span></div>
+    <div class="studio-head-actions"><button id="studio-tour-replay" class="studio-quiet">ⓘ Take a tour</button><button id="studio-close" class="studio-quiet" aria-label="Close AI Studio">×</button></div>
+  </header>
+  <section class="studio-requests"><div class="studio-section-label"><strong>Requested changes <span id="studio-note-count">0</span></strong><div class="studio-request-actions"><button id="studio-clear" class="studio-quiet" disabled>Clear all</button><button id="studio-add" class="studio-quiet">＋ Add request</button></div></div><ol id="studio-notes" class="studio-notes"></ol><div id="studio-cleared" class="studio-cleared" role="status" hidden>Requests cleared <button id="studio-clear-undo" class="studio-link">Undo</button></div></section>
+  <div class="studio-conversation">
+    <div class="studio-section-label">Conversation</div>
+    <p id="studio-status" role="status" aria-live="polite"></p>
+    <div id="studio-draft"><div class="studio-agent-ready"><span aria-hidden="true">›_</span><div><strong id="studio-agent-name">Your coding agent</strong><small>Ready for your requests</small></div></div></div>
+  <div id="studio-ready" hidden>
+    <h3>Ready to send</h3><p class="studio-hint">The agent runs with your local user permissions. Work on these dashboard files in one place until the run finishes.</p>
+    <details><summary>Context sent to the agent</summary><pre id="studio-context"></pre></details>
+    <div class="studio-actions"><button class="btn btn-primary" id="studio-launch">Send to agent</button><button class="btn btn-ghost" id="studio-back">Back to notes</button></div>
+  </div>
+  <div id="studio-run" hidden>
+    <div class="studio-console-head"><span>Activity<small id="studio-fresh-context" class="studio-fresh-context" hidden>New context each turn</small></span><button class="studio-quiet" id="studio-latest" hidden>Latest ↓</button><button class="studio-quiet" id="studio-stop">Stop agent</button><button class="studio-link" id="studio-review" disabled hidden>View changes</button><button class="studio-link" id="studio-undo-last" hidden>Undo last edit</button></div>
+    <div id="studio-output" class="studio-output" aria-label="Conversation with coding agent" tabindex="0"></div>
+    <section id="studio-permissions" aria-label="Tool approvals" hidden></section>
+    <details id="studio-diagnostics" hidden><summary>Agent diagnostics</summary><pre id="studio-diagnostic-output"></pre></details>
+  </div>
+  <div id="studio-review-panel" hidden>
+    <h3>Last changes</h3><p id="studio-validation"></p>
+    <p class="studio-hint">This comparison omits connection settings and normalizes YAML. Use git diff locally for exact text and formatting. Undo covers direct YAML/CSS files in this dashboard directory; it doesn’t undo other files an agent may have edited.</p>
+    <div id="studio-diff"></div>
+    <div class="studio-actions"><button class="btn btn-primary" id="studio-keep">Back to chat</button><button class="btn" id="studio-undo">Undo last edit</button><button class="btn btn-ghost" id="studio-recheck">Recheck</button></div>
+    <p class="studio-hint">Edits are already on disk. Nothing is committed or pushed.</p>
+  </div>
+
+  </div>
+  <footer class="studio-message-area">
+    <label class="studio-auto"><input id="studio-auto-approve" type="checkbox"> Auto-approve all tools <span title="Automatically approve every forwarded tool request, including commands and file writes, until you turn this off or close this session.">ⓘ</span></label>
+    <p id="studio-included-count">0 pinned requests included</p>
+    <div class="studio-message-box"><label class="studio-sr-only" for="studio-message">Overall instructions</label><textarea id="studio-message" rows="1" maxlength="4000" placeholder="Add instructions for these requests…"></textarea><div class="studio-message-tools"><button id="studio-context-toggle" class="studio-quiet" aria-expanded="false">Included context</button><button id="studio-send" class="btn btn-primary">Send to agent ↑</button></div></div>
+    <div class="studio-agent-row"><div class="studio-agent-picker"><span aria-hidden="true">›_</span><select data-native id="studio-entrypoint" aria-label="Coding agent"></select></div><button id="studio-settings-toggle" class="studio-settings-button" aria-expanded="false"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 7h6m4 0h6M4 17h10m4 0h2"/><circle cx="12" cy="7" r="2"/><circle cx="16" cy="17" r="2"/></svg> Agent settings</button></div>
+    <p id="studio-permission-summary" class="studio-hint"></p>
+    <p id="studio-no-agents" class="studio-hint" hidden>No supported agents found. Add a custom entrypoint in Agent settings.</p>
+  </footer>
+  <section id="studio-settings" class="studio-popover" role="dialog" aria-label="Agent settings" hidden><header><strong>Agent settings</strong><button class="studio-quiet" id="studio-settings-close" aria-label="Close agent settings">×</button></header><button class="studio-link" id="studio-entrypoints-refresh">Refresh installed agents</button>
+      <p class="studio-hint">Agents receive a minimal environment. Extra variables must be explicitly configured in studio.json. Shell entrypoints also read your shell startup files.</p>
+      <p class="studio-hint">File and network access follow your agent’s configuration. Studio does not enforce a project sandbox. Undo covers dashboard YAML and CSS only.</p>
+      <details id="studio-setup"><summary>Custom entrypoints</summary>
+        <form id="studio-entrypoint-form">
+          <label for="studio-entry-name">Name</label><input id="studio-entry-name" placeholder="Custom agent" maxlength="80" required>
+          <label for="studio-entry-kind">Agent</label><select data-native id="studio-entry-kind"><option value="claude">Claude Code</option><option value="codex">Codex</option></select>
+          <label for="studio-entry-command">Command or path</label><input id="studio-entry-command" placeholder="claude-custom" required>
+          <label for="studio-entry-shell">Shell for aliases or functions</label><select data-native id="studio-entry-shell"><option value="">None — executable</option><option value="/bin/zsh">zsh</option><option value="/bin/bash">bash</option></select>
+          <p class="studio-hint">Saved on this machine. Existing names are replaced. The agent uses its own login and permission settings.</p>
+          <button class="btn" type="submit">Save entrypoint</button>
+        </form>
+        <button class="studio-link" id="studio-check-entrypoint">Check selected entrypoint</button>
+        <p id="studio-config-path"></p>
+      </details>
+
+  </section>
+  <section id="studio-context-popover" class="studio-popover" role="dialog" aria-label="Included context" hidden><header><strong>Included context</strong><button class="studio-quiet" id="studio-context-close" aria-label="Close included context">×</button></header><p class="studio-hint">Your dashboard definition, active filters, pinned comments and selected elements accompany the request. Query results are not automatically included.</p>
+    <div class="studio-capture">
+      <button class="studio-link" id="studio-capture">Capture screenshot</button>
+      <span id="studio-capture-status" class="studio-hint"></span>
+      <div id="studio-capture-preview" hidden><img id="studio-capture-image" alt="Screenshot to send with comments"><button class="studio-link" id="studio-capture-remove">Remove screenshot</button></div>
+      <details><summary>Attach an existing image</summary><input type="file" id="studio-screenshot" accept="image/png" aria-label="Attach PNG screenshot"></details>
+      <p class="studio-hint">Optional. Choose this tab in the browser’s capture prompt. Only the image you preview is attached to your request.</p>
+    </div>
+
+    <button class="studio-link" id="studio-prepare">Review full context</button>
+  </section>
+  <section id="studio-close-sheet" class="studio-popover studio-close-sheet" role="alertdialog" aria-modal="true" aria-labelledby="studio-close-title" aria-describedby="studio-close-copy" hidden><header><strong id="studio-close-title">Close AI Studio?</strong><button class="studio-quiet" id="studio-close-cancel" aria-label="Keep working">×</button></header>
+    <p id="studio-close-copy" class="studio-hint"></p>
+    <div class="studio-actions"><button class="btn btn-primary" id="studio-close-keep">Keep edits and close</button><button class="btn" id="studio-close-review">View changes first</button></div><button class="studio-link" id="studio-close-back">Keep working</button>
+  </section>
+</aside>
+<nav id="studio-toolbar" class="studio-toolbar" aria-label="Dashboard annotation controls" hidden><button id="studio-browse" aria-pressed="true">↖ Browse</button><button id="studio-pick" aria-pressed="false">⌖ Annotate dashboard</button><button id="studio-pins-toggle" aria-pressed="true">◉ Pins</button><button id="studio-note-undo" aria-label="Undo last request edit" disabled>↶</button><button id="studio-compose-link">0 requests →</button></nav>
+<form id="studio-note-form" class="studio-composer" aria-label="Pin comment" hidden>
+<div class="studio-note-head"><strong>Request a change</strong><button type="button" id="studio-note-close" aria-label="Close request editor">×</button></div><label for="studio-target">Where</label><select data-native id="studio-target"><option value="">Dashboard</option>{% for tile in dashboard.tiles %}<option value="{{ tile.id }}">{{ tile.title or tile.id }}</option>{% endfor %}</select>
+      <label for="studio-note">What should change?</label><textarea id="studio-note" rows="3" maxlength="4000" required placeholder="Compare this with the previous month…"></textarea>
+      <div class="studio-actions"><button type="submit" class="btn btn-primary">Save request</button><button type="button" class="btn btn-ghost" id="studio-note-cancel">Cancel</button></div>
+    </form>

@@ -1,0 +1,272 @@
+# The dashboard file
+
+One YAML file is one dashboard: the source connection, the filters, the queries, and
+the tiles. This page is the reference for what goes in it. The README has the short
+version.
+
+## Layout
+
+Tiles flow in file order, so there are no coordinates to hand-author. `size: WxH`
+hints the footprint (grid units), and dragging a tile in the UI pins an exact
+`position`, which is the only key that diff touches.
+
+Tile ids derive from titles. Inline `sql:` on a tile skips the named-query
+indirection; a shared `queries:` block still works when several tiles reuse one
+query. `chart: area` (and the other chart types) infer their encodings from the
+result columns.
+
+## Parameters and filters
+
+Parameters (`{{ name }}`) are bound as native query parameters, never string
+interpolation. Write the placeholder unquoted: `c = {{ region }}`, not
+`c = '{{ region }}'`. A quoted placeholder is refused by name, because binding cannot
+reach inside a string literal and sqldash will not interpolate text into one. For a
+`LIKE` pattern, build it in SQL instead: `c LIKE '%' || {{ region }} || '%'`.
+
+Optional filters use conditional blocks. The block is included only when the filter
+has a value (a select sitting on `all` counts as off), and the inner parameter is
+still safely bound:
+
+```sql
+WHERE order_date BETWEEN {{ dates_start }} AND {{ dates_end }}
+  {% if region %}AND region = {{ region }}{% endif %}
+```
+
+A block can have `{% elif other_param %}` branches and an `{% else %}` fallback. The
+first branch whose param has a value wins, `{% else %}` runs when none of them do, and
+every branch binds its own parameters the same way:
+
+```sql
+{% if region %}SELECT * FROM orders WHERE region = {{ region }}
+{% elif country %}SELECT * FROM orders WHERE country = {{ country }}
+{% else %}SELECT * FROM orders{% endif %}
+```
+
+The condition is always a bare parameter name: no comparisons, no `not`, no nesting one
+block inside another, and no other Jinja tags. Anything else is refused by name, before
+the warehouse sees it.
+
+A `daterange` filter exposes `<name>_start` and `<name>_end`. A `select` filter can
+take static `options:` or `options_sql:`.
+
+## Chart types
+
+`line`, `bar`, `area`, `scatter`, `pie`, `big_number`, `table`, plus markdown tiles
+(just a `markdown:` key).
+
+## Relative dates
+
+`-30d` is the same as `last_30_days`. `mtd` and `ytd` are accepted everywhere a date
+is. A token names a window, so it resolves to that window's edge for the position it
+is in: `--start -30d` is 30 days ago, `--end -30d` is today. End a range in the past
+with an ISO date.
+
+A token resolves against the date on the machine running sqldash, never the date on
+the viewer's laptop, so a dashboard tile, the API, the CLI and MCP all run the same
+window for the same token.
+
+## Period comparison
+
+`compare: previous_period` or `compare: yoy` on a metric tile. Big numbers grow a
+delta with a direction arrow, and time-series charts overlay the prior window as a
+dashed series. The prior window is the dashboard's daterange shifted back, so the
+dashboard needs a daterange filter: without one `sqldash lint` errors and the tile
+shows that error instead of a number with no delta. The same window math applies to
+`sqldash query --compare`, `sqldash metric query --compare`, and the MCP
+`query_metric(compare=)` call, and when you run the tile by id (json returns
+`{rows, compare}`, csv returns the main window only). No SQL to write.
+
+## Formatting
+
+Locale-aware via the browser's `Intl`. `format: currency` uses the dashboard's
+`currency:` (default USD). Any ISO 4217 code works (`format: EUR`,
+`format: {revenue: JPY}`). A dashboard `locale:` (for example `de-DE`) overrides the
+viewer's. A metric's `format:` in metrics.yaml flows through to its tiles
+automatically.
+
+## Custom CSS
+
+An optional top-level `css: |` block styles the dashboard canvas. Use `:scope` for
+the canvas itself, `.tile` for cards, and `.tile[data-tile-id="revenue"]` for one
+stable tile ID. The stylesheet is scoped to `main.container`, so its selectors never
+reach the app's topbar or AI Studio; page tokens at the top of the block set the
+colours they are drawn with. See [custom themes](themes.md) for a complete example,
+current boundaries, and three runnable designs.
+
+## Sources
+
+`source:` is the only connection key. It is either one connection:
+
+```yaml
+source: {type: duckdb, database: analytics.duckdb}
+```
+
+or a name per connection, which is what a dashboard reading two databases writes:
+
+```yaml
+source:
+  warehouse:
+    type: snowflake
+    account: acme-xy12345
+    default: true
+  app_db:
+    type: postgres
+    host: db.internal
+```
+
+A tile picks one by name (`source: app_db`); a tile that names none runs against the
+default. **The default is the entry marked `default: true`.** A mapping with a single
+entry needs no mark. Anything else is an error — with several connections and no mark
+there is nothing to guess from, and inferring one from file order would let a
+reordering silently repoint every tile.
+
+Naming the default (`source: warehouse` on a tile) is allowed and means the same as
+naming nothing. Each entry of the map is a connection written as a mapping, so a
+connection given as a raw URL is `events: {url: "duckdb:///events.duckdb"}` — that
+is what keeps a misspelled field (`typ: duckdb`) a misspelled field instead of a
+connection named "typ".
+
+`sources:` was the older spelling of the named map, as a sibling of a single
+`source:`. Files written that way still load, unchanged and without a warning — but
+`source:` is what the docs teach and what the query page writes, so a new named
+connection lands there.
+
+Every major warehouse takes flat config and has an install extra
+(`pip install 'sqldash[bigquery]'` and so on):
+
+| Warehouse | Fields |
+|---|---|
+| Snowflake | `account`, `warehouse`, `role`, `authentication: externalbrowser`, `pat`, `keypair`, or `password`; `secondary_roles: true` to keep the user's secondary roles under `role` |
+| BigQuery | `project`, `database` (dataset); auth via ADC or `options: {credentials_path: ...}` |
+| Databricks | `host`, `http_path`, `token`, `catalog` and `schema` |
+| Redshift | `host`, `database`, `username`, `password` |
+| Athena | `host` (region), `schema`, `options: {s3_staging_dir: ...}` |
+| Postgres, MySQL, Trino, ClickHouse, SQLite | `host`, `database`, `username`, `password` as the driver needs |
+| DuckDB | `database` (a file or `:memory:`), `attach_files: true` to expose local CSV and Parquet files in `base_dir` as tables, `external_access: true` to let SQL read files outside the project |
+
+DuckDB's `attach_files` scans a local directory only. Remote object storage is not
+attached automatically.
+
+### DuckDB reads only the project directory
+
+A warehouse source is bounded by the credential it connects with. A DuckDB source
+has no credential: whatever SQL it runs reads files as the user running `sqldash
+serve`. Since anyone who can load a served dashboard can also type SQL into the
+query workspace, sqldash confines a DuckDB source to its own directories: the folder
+holding its `database:` file, and the folder its files resolve against, which is
+`base_dir` when the source sets one and the dashboard's own folder otherwise.
+Subdirectories of those are included. `read_text`, `read_csv`, `read_blob` and `glob`
+outside them fail with a permission error naming what they are confined to.
+
+So `database: warehouse/w.duckdb` with csvs at the project root reads both. A source
+with `base_dir: ../warehouse` reads the warehouse, and a csv left beside the dashboard
+is *outside* its reach: `base_dir` says where this source's files live, so move the
+file there or point `base_dir` at the directory holding both.
+
+If a project genuinely reads files outside itself (a shared drive, a `.duckdb` in
+another tree, an httpfs extension), say so on the source:
+
+```yaml
+source: {type: duckdb, database: app.duckdb, external_access: true}
+```
+
+That switch is off by default and it is not narrow: it hands every viewer of every
+dashboard on that source the full file access of the user running the server. Prefer
+pointing `base_dir` at the directory you want read.
+
+DuckDB gives one database file one configuration per process, so sources that share a
+`.duckdb` file share their reach. Two dashboards over the same warehouse file in the
+same project is the ordinary case and works, and so is a warehouse file with sibling
+project directories beside it: each one's reach sits inside the other's, so neither sees
+anything the other would not have seen. A source whose reach is not mutual with the one
+already on the file cannot be served: a dashboard nested inside another project sharing
+its warehouse file, or a mix of confined and `external_access: true`. The second one to
+connect is then refused with a message naming the conflict rather than quietly taking the
+first one's reach, and pointing both at the same `base_dir` is the way out.
+
+You can always paste a raw SQLAlchemy URL instead
+(`source: "trino://user@host:8080/hive"`). `sqldash lint` validates the config: typo'd
+types, missing required fields, fields the dialect ignores, and which extra to install.
+
+### A Snowflake role turns secondary roles off
+
+Snowflake users get `DEFAULT_SECONDARY_ROLES = ALL` unless an admin changed it, and with
+secondary roles active every role granted to the user contributes its privileges, not
+just the primary one. Left that way, `role: REPORTING_READER` would narrow nothing: a
+table only the user's owner role can read would still be readable through the source,
+from the query workspace and from MCP `run_sql`.
+
+When a source sets `role:`, or a role is picked in the query workspace, sqldash runs
+`USE SECONDARY ROLES NONE` on every pooled connection it hands out, right after
+`USE ROLE`, so the source gets exactly that role's grants. A source with no role keeps
+the user's defaults, and the role picker says which secondary roles are active. If the
+source relies on them (a primary role that only grants the warehouse, with data access
+coming from other roles), keep them explicitly:
+
+```yaml
+source: {type: snowflake, account: acme-xy12345, role: ANALYST, secondary_roles: true}
+```
+
+`secondary_roles: false` turns them off even without a `role:`.
+
+## Credential profiles
+
+Use `${env:VAR}` references in a source block, or name a per-user profile to keep
+credential values outside committed dashboard files:
+
+```yaml
+# in the dashboard
+source:
+  type: snowflake
+  account: acme-prod
+  profile: acme-prod
+```
+
+```yaml
+# in ~/.config/sqldash/profiles.yaml, per teammate, not committed
+acme-prod:
+  username: ada@acme.com
+  authentication: externalbrowser
+```
+
+Like AWS named profiles, the dashboard says which profile it needs and each teammate
+defines that name locally with their own credentials. Profiles work for every
+database type. `sqldash setup` writes the profile and project source and tests the
+connection.
+
+## Custom CSS
+
+`css:` is an author stylesheet for the dashboard. It is injected scoped to the dashboard
+area, so it can restyle tiles, headings and charts (`.tile[data-tile-id=revenue]` targets
+one tile) but never the top bar, AI Studio or the page around the dashboard.
+
+Anything written at page level in it means the page instead: the app's design tokens
+set at the top of the block, inside `:root`, `html`, `body` or `:scope`, or a plain
+`background` or `color` on `body`. Those are applied page-wide in both light and dark
+mode, so the background, glow, top bar and accent follow the dashboard from edge to edge:
+
+```yaml
+css: |
+  --page: #0c0918;
+  --page-glow: radial-gradient(ellipse at 15% 0%, #702fc950, transparent 55%);
+  --glass: #120e22d9;
+  --accent: #be91ff;
+  .tile { border-radius: 20px; }
+```
+
+Page tokens: `page`, `page-glow`, `surface`, `surface-raised`, `glass` (the top bar),
+`ink-1`, `ink-2`, `ink-muted`, `grid-line`, `baseline`, `border`, `border-strong`,
+`accent`, `accent-soft`, `accent-glow`, `accent-ink`, and `series-1` to `series-8` for
+chart colours. Values are colours or gradients; anything else at page level is dropped,
+`url()` and anything that could end a declaration included, and `sqldash lint` names
+what was dropped. A token set inside a narrower selector, such as one tile, stays
+scoped to it.
+
+## Extras
+
+Install only what your warehouses need: `sqldash[snowflake]`, `[postgres]`,
+`[bigquery]`, `[databricks]`, `[redshift]`, `[athena]`, `[mysql]`, `[trino]`,
+`[clickhouse]`, and `[lookml]` for LookML import. `sqldash[all]` exists but pulls every
+driver (pyarrow, google-cloud libs, and more), which is fine for a dev box and heavy for
+CI. `sqldash lint` names the exact extra to install when a dashboard needs a missing
+driver.

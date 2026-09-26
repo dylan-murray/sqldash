@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}{{ metric.title }} · Metrics · sqldash{% endblock %}
+{% block topbar %}
+<span class="crumb">/</span>
+<a class="page-title topbar-link" href="/">metrics</a>
+<span class="crumb">/</span>
+<span class="page-title">{{ metric.name }}</span>
+{% endblock %}
+{% block content %}
+<div class="page-head metric-head">
+  <div>
+    <h1>{{ metric.title }}</h1>
+    <p>{{ metric.description or "No description — add one in the metric definition." }}</p>
+  </div>
+  <div class="metric-head-meta">
+    <code class="metric-id">{{ metric.name }}</code>
+    <span class="badge">{{ metric.source_type }}</span>
+    <span class="badge badge-quiet">{{ "metrics.yaml" if metric.origin == "project" else "inline · " + (metric.dashboard or "") }}</span>
+  </div>
+</div>
+
+<div class="metric-previews" id="metric-previews"></div>
+
+<div class="metric-detail">
+  <section class="metric-panel">
+    <h2>Definition</h2>
+    <dl class="def-list">
+      <dt>expression</dt>
+      <dd><code>{{ metric.expr }}</code>{% if metric.expr_note %}<small class="def-note">{{ metric.expr_note }}</small>{% endif %}</dd>
+      <dt>relation</dt>
+      <dd><code>{{ metric.relation.table or metric.relation.sql }}</code></dd>
+      {% if metric.format %}
+      <dt>format</dt>
+      <dd><code>{{ metric.format }}</code></dd>
+      {% endif %}
+      {% if metric.time_dimension %}
+      <dt>time dimension</dt>
+      <dd><code>{{ metric.time_dimension.name }}</code> · default grain {{ metric.time_dimension.grain }}</dd>
+      {% endif %}
+      {% if metric.cumulative %}
+      <dt>cumulative</dt>
+      <dd>running total · each bucket includes every earlier one</dd>
+      {% endif %}
+      {% if metric.window %}
+      <dt>window</dt>
+      <dd>trailing {{ metric.window }} · each bucket aggregates the window ending there</dd>
+      {% endif %}
+      {% if metric.default_filters %}
+      <dt>filters</dt>
+      <dd>{% for f in metric.default_filters %}<code>{{ f }}</code>{% if not loop.last %} · {% endif %}{% endfor %}</dd>
+      {% endif %}
+      {% if metric.synonyms %}
+      <dt>synonyms</dt>
+      <dd>{{ metric.synonyms | join(", ") }}</dd>
+      {% endif %}
+      {% if metric.owners %}
+      <dt>owners</dt>
+      <dd>{{ metric.owners | join(", ") }}</dd>
+      {% endif %}
+    </dl>
+    {% if metric.dimensions %}
+    <h2>Dimensions</h2>
+    <table class="results dim-table">
+      <thead><tr><th>name</th><th>description</th></tr></thead>
+      <tbody>
+        {% for d in metric.dimensions %}
+        <tr><td><code>{{ d.name }}</code></td><td>{{ d.description or "" }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+
+  <section class="metric-panel">
+    <h2>Used by</h2>
+    {% if used_by %}
+    <ul class="used-by">
+      {% for u in used_by %}
+      <li><a href="/d/{{ u.dashboard|urlencode }}">{{ u.dashboard_title }}</a> <span class="used-by-tiles">{{ u.tiles | join(", ") }}</span></li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="quiet">No tiles reference this metric yet.</p>
+    {% endif %}
+    <h2>Query it</h2>
+    <pre class="usage"><code>sqldash metric query {{ metric.name }}{% if metric.dimensions %} -d {{ metric.dimensions[0].name }}{% endif %}{% if metric.time_dimension %} -g {{ metric.time_dimension.grain }}{% endif %}</code></pre>
+    <p class="quiet">Agents get the same metric via MCP: <code>query_metric("{{ metric.name }}", ...)</code></p>
+  </section>
+</div>
+
+<script id="metric-data" type="application/json">{{ metric_json | safe }}</script>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/vendor/echarts.min.js"></script>
+<script type="module" src="{{ asset_url('js/metric.js') }}"></script>
+{% endblock %}

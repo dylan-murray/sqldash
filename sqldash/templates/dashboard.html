@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% block title %}{{ dashboard.title }} · sqldash{% endblock %}
+{% block head %}
+{% if studio_enabled %}<link rel="stylesheet" href="{{ asset_url('css/studio.css') }}"><link rel="stylesheet" href="{{ asset_url('css/studio-tour.css') }}">{% endif %}
+<link rel="stylesheet" href="/static/vendor/gridstack.min.css">
+{% if dash_page %}<style id="dash-page">{{ dash_page | safe }}</style>{% endif %}
+{% if dash_css %}<style id="dash-css">@scope (main.container) {
+{{ dash_css | safe }}
+}</style>{% endif %}
+{% endblock %}
+{% block topbar %}
+<span class="crumb">/</span>
+<span class="page-title" id="topbar-title">{{ dashboard.title }}</span>
+{% endblock %}
+{% block actions %}
+<div class="dashboard-actions">
+<span class="save-indicator" id="save-indicator">Saved ✓</span>
+<a class="btn btn-ghost" href="/d/{{ name|urlencode }}/workspace">+ Explore</a>
+<button class="btn btn-ghost view-only" id="edit-btn">Edit</button>
+{% if studio_enabled %}<button class="btn btn-ghost" id="studio-open"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m9 3 2.2 6.8L18 12l-6.8 2.2L9 21l-2.2-6.8L0 12l6.8-2.2L9 3Z" transform="translate(2 0) scale(.9 1)"/><path d="m19 2 .9 2.1L22 5l-2.1.9L19 8l-.9-2.1L16 5l2.1-.9L19 2Z"/></svg><span>AI Studio</span></button>{% endif %}
+<button class="btn edit-only" id="done-btn" hidden>Exit edit</button>
+</div>
+{% endblock %}
+{% block content %}
+<div class="dash-head">
+  <div class="dash-head-text">
+    <div class="dash-title-row">
+      <h1 id="dash-title">{{ dashboard.title }}</h1>
+      <div class="dd" id="dash-info-dd">
+        <button type="button" class="dd-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="dash-info-menu" aria-label="Dashboard info" title="Dashboard info">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><circle cx="12" cy="8" r="0.8" fill="currentColor" stroke="none"/></svg>
+        </button>
+        <div class="dd-menu dash-info" id="dash-info-menu" role="dialog" aria-label="Dashboard info" tabindex="-1" hidden>
+          <div class="dash-info-name">{{ dashboard.title }}</div>
+          {% if dash_info.author or dash_info.modified %}
+          <div class="dash-info-byline">
+            {%- if dash_info.author -%}
+              {{ dash_info.author }}{% if dash_info.created %} · created {{ dash_info.created[:10] }}{% endif %}
+            {%- endif -%}
+            {%- if dash_info.modified -%}
+              {% if dash_info.author %} · {% endif %}updated {{ dash_info.modified[:10] }}{% if dash_info.modified_by %} by {{ dash_info.modified_by }}{% endif %}
+            {%- endif -%}
+          </div>
+          {% endif %}
+          <div class="dash-info-kicker">Metrics on this dashboard</div>
+          {% if dash_info.metrics %}
+          <ul>
+            {% for m in dash_info.metrics %}
+            <li class="dash-info-row">
+              <div class="dash-info-metric">
+                {% if m.href %}<a href="{{ m.href }}">{{ m.title }}</a>{% else %}{{ m.title }}{% endif %}
+              </div>
+              {% if m.also_on %}
+              <div class="dash-info-rel">also on
+                {% for d in m.also_on %}
+                <a href="/d/{{ d.name|urlencode }}">{{ d.title }}</a>{% if not loop.last %}, {% endif %}
+                {% endfor %}
+              </div>
+              {% endif %}
+              {% if m.kin %}
+              <div class="dash-info-rel">shares a relation with
+                {% for k in m.kin %}
+                <a href="{{ k.href }}">{{ k.title }}</a>{% if not loop.last %}, {% endif %}
+                {% endfor %}
+              </div>
+              {% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <p class="quiet">No metric tiles</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <p id="dash-desc" data-placeholder="Add a description…">{{ dashboard.description or "" }}</p>
+  </div>
+  <form class="filter-bar">
+  {% for f in dashboard.filters %}
+  <div class="filter">
+    <label for="filter-{{ f.name }}">{{ f.label or f.name }}
+      <button type="button" class="filter-remove edit-only" data-remove-filter="{{ f.name }}" title="Remove filter" hidden>✕</button>
+    </label>
+    {% if f.type == "daterange" %}
+    <div class="daterange" data-daterange data-default-preset="{{ (f.resolved_default or {}).get('preset', 'custom') }}">
+      <select class="dr-preset" id="filter-{{ f.name }}">
+        <option value="last_7_days">Last 7 days</option>
+        <option value="last_30_days">Last 30 days</option>
+        <option value="last_90_days">Last 90 days</option>
+        <option value="month_to_date">Month to date</option>
+        <option value="year_to_date">Year to date</option>
+        <option value="custom">Custom…</option>
+      </select>
+      <input type="date" class="dr-date" data-filter="{{ f.bind.start }}"
+             value="{{ (f.resolved_default or {}).get('start', '') }}" hidden>
+      <input type="date" class="dr-date" data-filter="{{ f.bind.end }}"
+             value="{{ (f.resolved_default or {}).get('end', '') }}" hidden>
+    </div>
+    {% elif f.type == "select" %}
+    <select id="filter-{{ f.name }}" data-filter="{{ f.name }}"{% if f.options_sql %} data-options-sql="1"{% if f.resolved_default and f.resolved_default != 'all' %} data-default="{{ f.resolved_default }}"{% endif %}{% endif %}>
+      {% for opt in f.options or (["all"] if f.options_sql else []) %}
+      <option value="{{ opt }}" {% if opt == f.resolved_default %}selected{% endif %}>{{ opt }}</option>
+      {% endfor %}
+    </select>
+    {% elif f.type == "date" %}
+    <input id="filter-{{ f.name }}" type="date" data-filter="{{ f.name }}" value="{{ f.resolved_default or '' }}">
+    {% elif f.type == "number" %}
+    <input id="filter-{{ f.name }}" type="number" data-filter="{{ f.name }}" value="{{ f.resolved_default or '' }}">
+    {% else %}
+    <input id="filter-{{ f.name }}" type="text" data-filter="{{ f.name }}" value="{{ f.resolved_default or '' }}">
+    {% endif %}
+  </div>
+  {% endfor %}
+  <button type="button" class="btn btn-ghost edit-only" id="add-filter-btn" hidden>+ Filter</button>
+  </form>
+</div>
+
+<div class="filter-editor" id="filter-editor" hidden>
+  <div class="field-row">
+    <div class="field field-inline"><label>Name</label><input type="text" id="fe-name" placeholder="e.g. category"></div>
+    <div class="field field-inline"><label>Label</label><input type="text" id="fe-label" placeholder="optional"></div>
+    <div class="field field-inline"><label>Type</label>
+      <select id="fe-type">
+        <option value="select">select</option>
+        <option value="text">text</option>
+        <option value="number">number</option>
+        <option value="date">date</option>
+        <option value="daterange">daterange</option>
+      </select>
+    </div>
+    <div class="field field-inline"><label>Default</label><input type="text" id="fe-default" placeholder="optional"></div>
+    <div class="field field-inline" id="fe-options-field"><label>Options (comma-sep)</label><input type="text" id="fe-options" placeholder="all, us, eu"></div>
+    <div class="field field-inline fe-action"><button type="button" class="btn btn-primary" id="fe-save">Add filter</button></div>
+  </div>
+  <p class="hint">The filter binds to <code>{{ '{{ name }}' }}</code> params in queries and to metric dimensions with the same name.</p>
+</div>
+
+<div class="grid-stack" id="grid">
+  {% for w in dashboard.tiles %}
+  <div class="grid-stack-item" gs-id="{{ w.id }}" gs-x="{{ w.position.x }}" gs-y="{{ w.position.y }}" gs-w="{{ w.position.w }}" gs-h="{{ w.position.h }}">
+    <div class="grid-stack-item-content tile {% if w.type == 'text' %}tile-text{% endif %}" data-tile-id="{{ w.id }}"{% if w.hue %} style="--wcolor: var(--series-{{ w.hue }})"{% endif %}>
+      <div class="tile-head">
+        {% if w.title %}<h3>{{ w.title }}</h3>{% endif %}
+        <div class="spacer"></div>
+        <div class="tile-actions">
+          {% if w.type != "text" %}<a class="wa-btn view-only" data-action="csv" title="Download CSV" hidden>⤓</a>{% endif %}
+          <a class="wa-btn edit-only" data-action="edit" href="/d/{{ name|urlencode }}/query?tile={{ w.id }}" title="Edit tile" hidden>✎</a>
+          <button class="wa-btn edit-only" data-action="delete" title="Delete tile" hidden>✕</button>
+        </div>
+      </div>
+      {% if w.type == "text" %}
+      <div class="tile-body">{{ w.rendered_markdown | safe }}</div>
+      {% else %}
+      <div class="tile-body is-chart"></div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+
+{% if studio_enabled %}{% include "_studio.html" %}{% endif %}
+<div class="toasts" id="toasts"></div>
+
+<script id="dashboard-data" type="application/json">{{ dashboard_json | safe }}</script>
+{% endblock %}
+{% block scripts %}
+<script src="/static/vendor/echarts.min.js"></script>
+<script src="/static/vendor/gridstack-all.js"></script>
+<script type="module" src="{{ asset_url('js/edit.js') }}"></script>
+{% if studio_enabled %}<script type="module" src="{{ asset_url('js/studio.js') }}"></script>{% endif %}
+{% endblock %}

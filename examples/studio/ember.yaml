@@ -1,0 +1,75 @@
+title: Ember
+description: Sunset warmth on deep plum. Revenue glows like coals.
+source: {type: duckdb, database: ':memory:'}
+layout: {row_height: 84}
+filters:
+  - {name: dates, type: daterange, label: Period, default: last_30_days}
+  - {name: region, type: select, label: Region, options: [Americas, Europe, Asia Pacific]}
+  - {name: channel, type: select, label: Channel, options: [Organic, Paid search, Email, Referral]}
+tiles:
+  - {id: revenue, title: Revenue, metric: revenue, compare: previous_period, size: 3x2}
+  - {id: orders, title: Orders, metric: order_count, compare: previous_period, size: 3x2}
+  - {id: aov, title: Average order value, metric: avg_order_value, size: 3x2}
+  - {id: customers, title: Customers, metric: customers, compare: previous_period, size: 3x2}
+  - id: trend
+    title: Revenue trajectory
+    metric: {name: revenue, grain: day}
+    compare: previous_period
+    chart: area
+    size: 8x3
+  - id: categories
+    title: Revenue by category
+    metric: {name: revenue, dimensions: [category]}
+    chart: bar
+    size: 4x3
+  - id: channels
+    title: Revenue share by channel
+    metric: {name: revenue, dimensions: [channel]}
+    chart: pie
+    size: 4x3
+  - id: products
+    title: Revenue by product
+    metric: {name: revenue, dimensions: [product, category]}
+    chart: table
+    size: 8x3
+
+css: |
+  --page: #1a0d14;
+  --page-glow: radial-gradient(ellipse at 20% 0%, #ff6b3540, transparent 55%), radial-gradient(ellipse at 90% 100%, #ff2d7a30, transparent 50%);
+  --glass: #1a0d14d9;
+  --surface: #24121c;
+  --surface-raised: #33192a;
+  --ink-1: #ffe9dc;
+  --ink-2: #e2b7a8;
+  --ink-muted: #b58a7e;
+  --border: #ff8a5b33;
+  --border-strong: #ff8a5b66;
+  --accent: #ff7a45;
+  --series-1: #ff7a45;
+  --series-2: #ffb347;
+  --series-3: #ff4f7d;
+  --series-4: #ffd28a;
+  --series-5: #d94a6e;
+  --series-6: #ff9e80;
+  --series-7: #c66b3a;
+  --series-8: #ffe3c2;
+  .dash-head { padding: 10px 6px 24px; }
+  #dash-title { font-size: clamp(25px, 3vw, 42px); letter-spacing: -.055em; font-weight: 750; }
+  .dash-head-text p { max-width: 550px; line-height: 1.6; }
+  .tile { transition: transform .25s, box-shadow .25s; }
+  .tile:hover { transform: translateY(-3px); }
+  .tile-head { padding: 18px 20px 0; }
+  .tile-head h3 { letter-spacing: .1em; font-size: 10px; }
+  .big-number { padding: 0 12px; }
+  .big-number .value { font-weight: 650; letter-spacing: -.055em; }
+  @media (prefers-reduced-motion: reduce) { .tile { transition: none; } }
+
+  #dash-title { color: #ffd0b3; text-shadow: 0 2px 22px #ff6b3540; }
+  .tile { border-radius: 18px; border: 1px solid #ff8a5b2e; background: linear-gradient(160deg, #2b1421, #1f0f19); box-shadow: 0 10px 30px #00000055; }
+  .tile::before { display: none; }
+  .tile:hover { box-shadow: 0 0 30px #ff6b3533; }
+  .tile-head h3 { color: #f0a88c; }
+  .tile[data-tile-id=revenue] { background: linear-gradient(135deg, #ff6b35, #ff2d7a); border-color: #ffb08a; --ink-1: #fff4ea; --ink-2: #ffe1d0; --ink-muted: #ffd6c2; --good-text: #fff4ea; }
+  .tile[data-tile-id=revenue] .value, .tile[data-tile-id=revenue] h3 { color: #fff4ea; }
+  .tile[data-tile-id=orders] .value { color: #ffb347; }
+  .tile[data-tile-id=aov] .value { color: #ff8fb0; }

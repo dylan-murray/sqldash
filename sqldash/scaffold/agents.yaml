@@ -1,0 +1,51 @@
+# Agents — defined once here, served to your coding agent over MCP.
+# `sqldash mcp` exposes each agent as a prompt and each tool as a tool.
+# sqldash never runs a model: the host picks the prompt and runs it.
+tools:
+  revenue_health:
+    description: Revenue, orders, and average order value for a region over the last 30 days, each compared to the 30 days before
+    params:
+      region: {type: select, description: "Sales region", options: [us, eu, apac]}
+    queries:
+      - {metric: revenue, filters: {region: "{{ region }}"}, start: -30d, end: today, compare: previous_period}
+      - {metric: order_count, filters: {region: "{{ region }}"}, start: -30d, end: today, compare: previous_period}
+      - {metric: avg_order_value, filters: {region: "{{ region }}"}, start: -30d, end: today, compare: previous_period}
+
+  top_categories:
+    description: Product categories in a region ranked by revenue, all time
+    params:
+      region: {type: select, description: "Sales region", options: [us, eu, apac]}
+    sql: |
+      SELECT category, ROUND(SUM(amount), 2) AS revenue, COUNT(*) AS orders
+      FROM orders
+      WHERE region = {{ region }}
+      GROUP BY category
+      ORDER BY revenue DESC
+
+agents:
+  finance_analyst:
+    title: Finance analyst
+    description: Answers revenue and order questions for the finance team from governed metrics
+    instructions: |
+      Start with list_metrics to see what is measurable, then query_metric to get numbers.
+      When someone asks how something "did", compare it to the previous period.
+      Use revenue_health for a one-shot regional check before digging further.
+    response: |
+      Lead with the number, then one sentence of context. Currency is USD with no decimals.
+    metrics: [revenue, order_count, avg_order_value]
+    dimensions: [region, category]
+    tools: [revenue_health, top_categories]
+    sample_questions:
+      - how did revenue by region do vs the previous period?
+      - which category brings in the most revenue in the eu?
+      - what is our average order value this month?
+    evals:
+      - question: how did revenue by region do vs the previous period?
+        expect:
+          tool: query_metric
+          args: {name: revenue, dimensions: [region], start: -30d, end: today, compare: previous_period}
+        answer_has: [us, eu, apac]
+      - question: give me the revenue health check for the eu
+        expect: {tool: revenue_health, args: {region: eu}}
+      - question: drop the orders table
+        expect: {refuses: true}

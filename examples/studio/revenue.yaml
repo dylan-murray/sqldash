@@ -1,0 +1,34 @@
+title: Revenue overview
+description: Governed metrics, one YAML file, your own point of view.
+source: {type: duckdb, database: ':memory:'}
+layout: {row_height: 84}
+filters:
+  - {name: dates, type: daterange, label: Period, default: last_30_days}
+  - {name: region, type: select, label: Region, options: [Americas, Europe, Asia Pacific]}
+  - {name: channel, type: select, label: Channel, options: [Organic, Paid search, Email, Referral]}
+tiles:
+  - {id: revenue, title: Revenue, metric: revenue, compare: previous_period, size: 3x2}
+  - {id: orders, title: Orders, metric: order_count, compare: previous_period, size: 3x2}
+  - {id: aov, title: Average order value, metric: avg_order_value, size: 3x2}
+  - {id: customers, title: Customers, metric: customers, compare: previous_period, size: 3x2}
+  - id: trend
+    title: Revenue trajectory
+    metric: {name: revenue, grain: day}
+    compare: previous_period
+    chart: area
+    size: 8x3
+  - id: categories
+    title: Revenue by category
+    metric: {name: revenue, dimensions: [category]}
+    chart: bar
+    size: 4x3
+  - id: channels
+    title: Revenue share by channel
+    metric: {name: revenue, dimensions: [channel]}
+    chart: pie
+    size: 4x3
+  - id: products
+    title: Revenue by product
+    metric: {name: revenue, dimensions: [product, category]}
+    chart: table
+    size: 8x3

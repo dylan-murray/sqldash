@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}{{ "Tile not found" if missing_tile else ("Edit tile" if editing_tile else "New tile") }} · {{ dashboard.title }} · sqldash{% endblock %}
+{% block topbar %}
+<span class="crumb">/</span>
+<a class="page-title topbar-link" href="/d/{{ name|urlencode }}">{{ dashboard.title }}</a>
+<span class="crumb">/</span>
+<span class="page-title">{{ "tile not found" if missing_tile else ("edit tile" if editing_tile else "new tile") }}</span>
+{% endblock %}
+{% block actions %}
+<a class="btn btn-ghost" href="/d/{{ name|urlencode }}">← Back to dashboard</a>
+{% endblock %}
+{% block head %}{% if request.query_params.get("embedded") %}<link rel="stylesheet" href="{{ asset_url('css/workspace.css') }}">{% endif %}{% endblock %}
+{% block main %}
+<div class="query-layout{% if request.query_params.get('embedded') %} workspace-editor{% endif %}">
+  {% if missing_tile %}
+  <div class="source-banner" id="missing-tile" role="status">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>
+    <div>
+      <div class="sb-message">No tile '{{ missing_tile }}' on {{ dashboard.title }}</div>
+      <div class="sb-hint">It was deleted, or renamed so its id changed. This is a blank new tile, so saving here adds a tile instead of editing the one you asked for.</div>
+    </div>
+  </div>
+  {% endif %}
+  <div class="editor-pane">
+    <div class="editor-toolbar">
+      <div class="segmented" id="mode-toggle"{% if editing_tile %} hidden{% endif %}>
+        <button type="button" class="seg-btn active" data-mode="sql">SQL</button>
+        <button type="button" class="seg-btn" data-mode="text">Text</button>
+        <button type="button" class="seg-btn" data-mode="metric">Metric</button>
+      </div>
+      <button class="btn btn-primary" id="run-btn">Run <kbd>⌘⏎</kbd></button>
+      <button class="btn" id="cancel-btn" hidden>Cancel</button>
+      <select id="query-picker" data-icon="file" data-crumb="saved" data-btn="dd-btn-ghost"
+        title="Load a saved query from this dashboard">
+        <option value="">saved queries</option>
+        {% for qname in dashboard.queries %}
+        <option value="{{ qname }}">{{ qname }}</option>
+        {% endfor %}
+      </select>
+      <div class="spacer"></div>
+      <select id="source-picker" data-icon="db" data-skin="chip" data-menu-title="Run against">
+        {% for src in source_choices %}
+        <option value="{{ src.key }}"{% if src.key == selected_source %} selected{% endif %}>{{ src.label }}</option>
+        {% endfor %}
+      </select>
+      <span class="schema-status" id="schema-status" hidden></span>
+      <a class="btn btn-ghost" id="csv-btn" hidden download>Download CSV</a>
+    </div>
+    <div id="metric-pane" class="metric-pane" hidden>
+      <div class="field">
+        <label>Metric</label>
+        <select id="metric-picker" data-menu-title="Metric">
+          <option value="">Choose a metric…</option>
+        </select>
+      </div>
+      <div class="field" id="metric-dims-field" hidden>
+        <label>Dimensions</label>
+        <div id="metric-dims" class="metric-dims"></div>
+      </div>
+      <div class="field" id="metric-grain-field" hidden>
+        <label>Grain</label>
+        <select id="metric-grain">
+          <option value="">none</option>
+          <option value="hour">hour</option>
+          <option value="day">day</option>
+          <option value="week">week</option>
+          <option value="month">month</option>
+          <option value="quarter">quarter</option>
+          <option value="year">year</option>
+        </select>
+      </div>
+    </div>
+    <div id="sql-editor">SELECT 42 AS answer</div>
+    <div id="text-editor" class="text-editor" hidden>
+      <textarea id="text-markdown" placeholder="Write markdown — **bold**, `code`, [links](…), lists…"></textarea>
+    </div>
+  </div>
+  <div class="results-pane">
+    <div class="results-meta" id="results-meta">
+      <span class="stat">Results appear below — <kbd>⌘⏎</kbd> to run</span>
+    </div>
+    <div class="results-split">
+      <div class="results-body" id="results-body">
+        <div class="placeholder">
+          <div>No results yet</div>
+          <div class="hint">Tables from your source are queryable directly</div>
+        </div>
+      </div>
+      <div class="chart-side">
+        <div class="field">
+          <label>Chart</label>
+          <div class="segmented" id="qb-type"></div>
+        </div>
+        <div class="field-row" id="qb-encoding"></div>
+        <div class="field chart-side-preview">
+          <label>Preview</label>
+          <div class="dw-preview" id="qb-preview">
+            <div class="placeholder">Run the query to preview</div>
+          </div>
+        </div>
+        <div class="field">
+          <label>{{ "Save" if editing_tile else "Add to dashboard" }}</label>
+          <div id="query-sharing" class="field" hidden>
+            <p id="query-sharing-summary" class="hint"></p>
+            <label id="independent-query-label"><input type="checkbox" id="independent-query"> Make an independent SQL copy</label>
+            <div id="shared-edit-choice" hidden>
+              <label for="shared-edit-scope">Apply SQL changes to</label>
+              <select id="shared-edit-scope"><option value="copy">Only this tile (copy query)</option><option value="shared">Every tile using this query</option></select>
+            </div>
+          </div>
+          <div class="add-row">
+            <input type="text" id="qb-title" placeholder="Tile title" value="{{ editing_tile.title or '' }}">
+            <button class="btn btn-primary" id="qb-add"{% if not editing_tile %} disabled{% endif %}>{{ "Save tile" if editing_tile else "Add to dashboard" }}</button>
+          </div>
+          <div class="query-save-feedback" id="qb-save-feedback" hidden>
+            <p id="qb-save-status" role="status" aria-live="polite"></p>
+            <div class="query-save-actions">
+              <a href="/d/{{ name|urlencode }}" target="_blank" rel="noopener">View dashboard ↗</a>
+              <button type="button" class="btn btn-ghost" id="qb-refresh" hidden>Refresh dashboard state</button>
+            </div>
+          </div>
+          <button type="button" class="btn btn-ghost" id="qb-another" hidden>Create another tile</button>
+          <p class="hint" id="qb-hint">{% if editing_tile %}Saves this tile back to <code>{{ name }}.yaml</code>.{% else %}Saves the SQL as a named query in <code>{{ name }}.yaml</code> and places the tile at the bottom of the dashboard.{% endif %}</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="toasts" id="toasts"></div>
+<script id="dashboard-data" type="application/json">{{ dashboard_json | safe }}</script>
+{% endblock %}
+{% block scripts %}
+{% if request.query_params.get("embedded") %}<script type="module" src="{{ asset_url('js/workspace-editor.js') }}"></script>{% endif %}
+<script src="/static/vendor/echarts.min.js"></script>
+<script src="/static/vendor/ace/ace.js"></script>
+<script src="/static/vendor/ace/ext-language_tools.js"></script>
+<script type="module" src="{{ asset_url('js/editor.js') }}"></script>
+{% endblock %}

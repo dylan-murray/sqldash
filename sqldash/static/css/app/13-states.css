@@ -1,0 +1,71 @@
+/* ---------- period-comparison delta ---------- */
+
+.bn-delta {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 580;
+  font-variant-numeric: tabular-nums;
+}
+.bn-delta.up { color: var(--good-text); }
+.bn-delta.down { color: var(--danger); }
+
+/* ---------- error page + source-failure banner ---------- */
+
+.error-page { display: flex; justify-content: center; padding: 12vh 0; }
+.error-card {
+  max-width: 560px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.error-card svg { color: var(--danger); }
+.error-card h1 { margin: 0; font-size: 18px; letter-spacing: -0.02em; }
+.error-file { font-family: var(--mono); font-size: 12px; color: var(--ink-muted); }
+.error-message {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  font-family: var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: color-mix(in srgb, var(--danger), transparent 94%);
+  border: 1px solid color-mix(in srgb, var(--danger), transparent 80%);
+  border-radius: 9px;
+  padding: 12px 14px;
+}
+.error-actions { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
+
+.source-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 11px 15px;
+  border: 1px solid color-mix(in srgb, var(--danger), transparent 75%);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--danger), transparent 93%);
+  color: var(--ink-1);
+  font-size: 13px;
+}
+.source-banner svg { color: var(--danger); flex-shrink: 0; margin-top: 2px; }
+.source-banner .sb-message {
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.source-banner .sb-hint { color: var(--ink-muted); font-size: 12px; margin-top: 3px; font-family: var(--font); }
+.query-layout > .source-banner { flex-shrink: 0; margin: 14px 20px 0; }
+.tile-status .err-quiet { color: var(--ink-muted); font-size: 12.5px; }
+
+.dashboard-actions { display:flex; align-items:center; gap:3px; }
+.dashboard-actions > .btn { padding-inline:10px; }
+
+#explore-dialog:not([open]) { display: none; }
+#explore-dialog::backdrop { background: var(--scrim); }
+#explore-dialog form { display: flex; flex-direction: column; gap: 12px; }

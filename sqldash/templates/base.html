@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}sqldash{% endblock %}</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%232a78d6'/%3E%3Cstop offset='1' stop-color='%237c5cd6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='24' height='24' rx='6' fill='url(%23g)'/%3E%3Cpath d='M5.5 16.5 L10 10.8 L13.7 13.6 L18.5 7' fill='none' stroke='white' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="preload" href="/static/vendor/geist-var.woff2" as="font" type="font/woff2" crossorigin>
+  {%- for href in app_stylesheets() %}
+  <link rel="stylesheet" href="{{ href }}">
+  {%- endfor %}
+  <script type="importmap" nonce="{{ request.state.csp_nonce }}">{{ js_importmap() | safe }}</script>
+  <script nonce="{{ request.state.csp_nonce }}">
+    (function () {
+      const saved = localStorage.getItem("sqldash-theme");
+      const theme = saved || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.dataset.theme = theme;
+    })();
+  </script>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="mark"><svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M2.4 8.4 L5 5.2 L7.1 6.8 L9.6 3.4" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>sqldash{% if subtitle %} <em>{{ subtitle }}</em>{% endif %}</a>
+    {% if all_dashboards and all_dashboards | length > 0 %}
+    <span class="crumb">/</span>
+    <div class="dd" id="dash-switcher-dd">
+      <button type="button" class="dd-btn dd-btn-ghost" aria-haspopup="listbox" aria-expanded="false">
+        <span class="dd-label">{% block switcher_label %}{{ switcher_label }}{% endblock %}</span><span class="dd-chev"></span>
+      </button>
+      <div class="dd-menu" role="listbox" hidden>
+        {% if all_dashboards[0].repo %}
+        {% for repo, items in all_dashboards | groupby("repo") %}
+        <div class="dd-menu-title{% if repo == current_repo %} current{% endif %}">{{ repo }}</div>
+        {% for d in items %}
+        <a class="dd-item{% if d.name == name %} selected{% endif %}" role="option" href="/d/{{ d.name|urlencode }}" title="{{ d.title }}">{{ d.title }}</a>
+        {% endfor %}
+        {% endfor %}
+        {% else %}
+        <div class="dd-menu-title">Switch dashboard</div>
+        {% for d in all_dashboards %}
+        <a class="dd-item{% if d.name == name %} selected{% endif %}" role="option" href="/d/{{ d.name|urlencode }}" title="{{ d.title }}">{{ d.title }}</a>
+        {% endfor %}
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+    {% block topbar %}{% endblock %}
+    <div class="spacer"></div>
+    {% block actions %}{% endblock %}
+    <button class="icon-btn" id="settings-open" title="Local setup" aria-label="Local setup">
+      <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+    </button>
+    <button class="icon-btn" id="theme-toggle" title="Toggle theme" aria-label="Toggle theme">◐</button>
+  </header>
+  <div class="modal-backdrop" id="settings-modal" hidden>
+    <div class="modal modal-wide" id="settings-content"></div>
+  </div>
+  {% block main %}
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+  {% endblock %}
+  <script type="module" src="{{ asset_url('js/settings.js') }}"></script>
+  <script type="module" src="{{ asset_url('js/dropdown.js') }}"></script>
+  <script nonce="{{ request.state.csp_nonce }}">
+    document.getElementById("theme-toggle").addEventListener("click", () => {
+      const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = next;
+      localStorage.setItem("sqldash-theme", next);
+      window.dispatchEvent(new CustomEvent("sqldash:themechange"));
+    });
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

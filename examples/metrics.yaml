@@ -1,0 +1,56 @@
+source: {type: duckdb, database: ":memory:"}
+
+relations:
+  orders:
+    sql: |
+      SELECT * FROM (VALUES
+        (DATE '2026-08-01', 'us',   'gadgets', 120.00),
+        (DATE '2026-08-01', 'eu',   'gadgets',  80.00),
+        (DATE '2026-08-02', 'us',   'doodads', 200.00),
+        (DATE '2026-08-03', 'apac', 'doodads',  60.00),
+        (DATE '2026-08-04', 'eu',   'gizmos',  150.00),
+        (DATE '2026-08-05', 'us',   'gadgets',  90.00),
+        (DATE '2026-08-06', 'apac', 'gizmos',  130.00)
+      ) AS t(order_date, region, category, amount)
+
+metrics:
+  revenue:
+    title: Revenue
+    description: Total order revenue in USD
+    relation: orders
+    expr: SUM(amount)
+    format: currency
+    time_dimension: {name: order_date, grain: day}
+    dimensions: [{name: region}, {name: category}]
+
+  order_count:
+    title: Orders
+    relation: orders
+    expr: COUNT(*)
+    time_dimension: {name: order_date, grain: day}
+    dimensions: [{name: region}, {name: category}]
+
+  avg_order_value:
+    title: Average order value
+    derived: "{revenue} / NULLIF({order_count}, 0)"
+    format: currency
+    time_dimension: {name: order_date, grain: day}
+    dimensions: [{name: region}, {name: category}]
+
+  cumulative_revenue:
+    title: Cumulative revenue
+    relation: orders
+    expr: SUM(amount)
+    cumulative: true
+    format: currency
+    time_dimension: {name: order_date, grain: day}
+    dimensions: [{name: region}, {name: category}]
+
+  trailing_28d_revenue:
+    title: Trailing 28-day revenue
+    relation: orders
+    expr: SUM(amount)
+    window: 28 days
+    format: currency
+    time_dimension: {name: order_date, grain: day}
+    dimensions: [{name: region}, {name: category}]

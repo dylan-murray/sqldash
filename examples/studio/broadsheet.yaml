@@ -1,0 +1,76 @@
+title: Morning broadsheet
+description: Cream paper, black ink, serif headlines. Numbers you can fold under your arm.
+source: {type: duckdb, database: ':memory:'}
+layout: {row_height: 84}
+filters:
+  - {name: dates, type: daterange, label: Period, default: last_30_days}
+  - {name: region, type: select, label: Region, options: [Americas, Europe, Asia Pacific]}
+  - {name: channel, type: select, label: Channel, options: [Organic, Paid search, Email, Referral]}
+tiles:
+  - {id: revenue, title: Revenue, metric: revenue, compare: previous_period, size: 3x2}
+  - {id: orders, title: Orders, metric: order_count, compare: previous_period, size: 3x2}
+  - {id: aov, title: Average order value, metric: avg_order_value, size: 3x2}
+  - {id: customers, title: Customers, metric: customers, compare: previous_period, size: 3x2}
+  - id: trend
+    title: Revenue trajectory
+    metric: {name: revenue, grain: day}
+    compare: previous_period
+    chart: area
+    size: 8x3
+  - id: categories
+    title: Revenue by category
+    metric: {name: revenue, dimensions: [category]}
+    chart: bar
+    size: 4x3
+  - id: channels
+    title: Revenue share by channel
+    metric: {name: revenue, dimensions: [channel]}
+    chart: pie
+    size: 4x3
+  - id: products
+    title: Revenue by product
+    metric: {name: revenue, dimensions: [product, category]}
+    chart: table
+    size: 8x3
+
+css: |
+  --page: #f3ecdc;
+  --page-glow: none;
+  --glass: #f3ecdce6;
+  --surface: #f8f3e7;
+  --surface-raised: #fffdf7;
+  --ink-1: #1a1712;
+  --ink-2: #3d372c;
+  --ink-muted: #75695a;
+  --border: #1a171226;
+  --border-strong: #1a171255;
+  --accent: #b3261e;
+  --series-1: #1a1712;
+  --series-2: #b3261e;
+  --series-3: #6b6152;
+  --series-4: #9c7c3c;
+  --series-5: #3b4a5a;
+  --series-6: #c9a25a;
+  --series-7: #4d3d2e;
+  --series-8: #7a2e2a;
+  .dash-head { padding: 10px 6px 24px; }
+  #dash-title { font-size: clamp(25px, 3vw, 42px); letter-spacing: -.055em; font-weight: 750; }
+  .dash-head-text p { max-width: 550px; line-height: 1.6; }
+  .tile { transition: transform .25s, box-shadow .25s; }
+  .tile:hover { transform: translateY(-3px); }
+  .tile-head { padding: 18px 20px 0; }
+  .tile-head h3 { letter-spacing: .1em; font-size: 10px; }
+  .big-number { padding: 0 12px; }
+  .big-number .value { font-weight: 650; letter-spacing: -.055em; }
+  @media (prefers-reduced-motion: reduce) { .tile { transition: none; } }
+
+  #dash-title { font-family: Georgia, 'Times New Roman', serif; font-weight: 700; letter-spacing: -.02em; color: #1a1712; }
+  .dash-head { border-bottom: 3px double #1a1712; padding-bottom: 18px; margin-bottom: 8px; }
+  .dash-head-text p { font-family: Georgia, serif; font-style: italic; }
+  .tile { border-radius: 0; border: 1px solid #1a171233; background: #f8f3e7; box-shadow: none; }
+  .tile::before { display: none; }
+  .tile:hover { transform: none; border-color: #1a1712; }
+  .tile-head h3 { font-family: Georgia, serif; font-weight: 700; font-size: 11px; letter-spacing: .06em; color: #1a1712; border-bottom: 1px solid #1a171233; padding-bottom: 6px; }
+  .big-number .value { font-family: Georgia, serif; font-weight: 700; letter-spacing: -.02em; color: #1a1712; }
+  .tile[data-tile-id=revenue] .value { color: #b3261e; }
+  table.results th { font-family: Georgia, serif; }

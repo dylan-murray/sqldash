@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block switcher_label %}{{ dashboard.title }}{% endblock %}
+{% block title %}Exploration · {{ dashboard.title }} · sqldash{% endblock %}
+{% block topbar %}<span class="crumb">/</span><span class="page-title">exploration</span>{% endblock %}
+{% block actions %}<button class="btn btn-ghost" id="browse-tables">Explorer</button><a class="btn btn-ghost workspace-back" aria-label="Back to dashboard" href="/d/{{ name|urlencode }}">← <span>Back to dashboard</span></a>{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ asset_url('css/workspace.css') }}">{% endblock %}
+{% block main %}
+<main id="workspace" data-dashboard="{{ name }}" data-identity="{{ workspace_identity }}" data-default-source="{{ name }}.source" data-default-alias="{{ dashboard.default_source_name or '' }}" data-local-sources='{{ dashboard.sources.keys() | list | tojson }}' >
+  <aside id="workspace-sidebar">
+    <div class="workspace-nav"><strong>Explorer</strong><button class="workspace-icon" id="explorer-new" aria-label="New query">+</button></div>
+    <section id="library-browser"><details class="saved-fold">
+      <summary class="library-heading"><span class="workspace-caret" aria-hidden="true"></span><svg class="workspace-line-icon" aria-hidden="true" viewBox="0 0 16 16"><path d="M2 4h5l1.5 2H14v7H2zM2 4V2.5h4l1.5 1.5"/></svg><span>Saved queries</span></summary>
+      <div class="library-tools"><button class="workspace-icon" id="library-search-toggle" aria-label="Search saved queries"><svg class="workspace-line-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="6.5" cy="6.5" r="4.5"/><path d="m10 10 4 4"/></svg></button><button class="workspace-icon" id="library-refresh" aria-label="Refresh query library"><svg class="workspace-line-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 6A5.5 5.5 0 1 0 14 9M13.5 2v4h-4"/></svg></button></div>
+      <input type="search" id="library-search" hidden aria-label="Search saved queries" placeholder="Find a query…">
+      <div id="library-entries"></div><p class="hint" id="library-empty">No saved queries yet.</p>
+      <div id="workspace-browser" hidden>
+        {% for query_name in dashboard.queries %}<button class="workspace-query" data-query="{{ query_name }}" data-sql="{{ dashboard.queries[query_name] }}">{{ query_name }}</button>{% endfor %}
+        {% if not dashboard.queries %}<p class="hint">No saved dashboard queries.</p>{% endif %}
+      </div></details>
+    </section>
+    <section id="metric-browser">
+      <details class="saved-fold">
+        <summary><span class="workspace-caret" aria-hidden="true"></span><svg class="workspace-line-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 12V8m5 4V3m5 9V6"/></svg><span>Metrics</span></summary>
+        <input id="metric-search" type="search" aria-label="Find metrics" placeholder="Find a metric…">
+        <p id="metric-browser-message" class="hint" role="status">Loading metrics…</p>
+        <div id="metric-entries"></div>
+      </details>
+    </section>
+    <section id="schema-browser">
+      <div class="workspace-section">Sources <button class="workspace-icon" id="schema-refresh" aria-label="Refresh database objects">↻</button></div>
+      <div class="workspace-context-rows">
+        <div class="workspace-source"><select id="workspace-source" data-label-title aria-label="Connection" data-icon="plug" data-btn="dd-btn-ghost" data-menu="sections" data-search="Switch connection…" data-search-empty="No matching connections"><option value="">Loading connection…</option></select></div>
+        <div id="workspace-role-controls">
+          <label for="workspace-role">Role</label>
+          <select id="workspace-role" data-label-title aria-label="Role" data-icon="role" data-btn="dd-btn-ghost" data-menu="sections" data-search="Switch role…" data-search-empty="No matching roles" disabled><option>Loading roles…</option></select>
+          <p class="hint" role="status" hidden></p>
+        </div>
+        <div id="workspace-database-controls" hidden>
+          <label for="workspace-database">Database</label>
+          <select id="workspace-database" data-label-title aria-label="Database" data-icon="db" data-btn="dd-btn-ghost" data-menu="sections" data-search="Switch database…" data-search-empty="No matching databases" data-footer="Other databases" data-footer-code="DATABASE.SCHEMA.TABLE"></select>
+          <p class="hint" role="status" hidden></p>
+        </div>
+        <div id="workspace-warehouse-controls" hidden>
+          <label for="workspace-warehouse">Warehouse</label>
+          <select id="workspace-warehouse" data-label-title aria-label="Warehouse" data-icon="wh" data-btn="dd-btn-ghost" data-menu="sections" data-search="Switch warehouse…" data-search-empty="No matching warehouses"></select>
+          <p class="hint" role="status" hidden></p>
+        </div>
+      </div>
+      <div class="schema-search-wrap"><svg class="workspace-line-icon" aria-hidden="true" viewBox="0 0 16 16"><circle cx="6.7" cy="6.7" r="4.2"/><path d="m10 10 3.7 3.7"/></svg><input id="schema-search" type="search" placeholder="Filter tables…" aria-label="Find tables or columns"></div>
+      <p id="schema-message" class="hint" role="status">Loading database objects…</p>
+      <div id="schema-tree"></div>
+      <button class="btn btn-ghost" id="schema-more" hidden>Show more</button>
+    </section>
+  </aside>
+  <div class="workspace-divider" id="sidebar-resize" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" tabindex="0"></div>
+  <section id="workspace-main">
+    <div class="workspace-tabs"><button class="btn btn-ghost" id="sidebar-open" aria-label="Expand sidebar" hidden>›</button><div id="query-tabs" role="tablist" aria-label="Open queries"></div><button class="btn btn-ghost" id="new-query" aria-label="New query">+</button></div>
+    <div class="workspace-query-actions" hidden><span id="draft-label">Local draft</span><button class="btn" id="library-save" disabled>Save query</button></div>
+    <div id="workspace-frames"></div>
+    <p id="workspace-notice" role="status" hidden></p>
+    <div class="workspace-draft-actions"><span id="workspace-context"></span><button class="btn btn-ghost" id="export-drafts">Download drafts</button></div>
+  </section>
+</main>
+<dialog id="query-dialog" aria-labelledby="query-dialog-heading">
+  <form method="dialog"><h2 id="query-dialog-heading"></h2><p id="query-dialog-message"></p>
+    <div class="query-dialog-actions"><button class="btn" value="cancel">Cancel</button><button class="btn btn-primary" id="query-dialog-confirm" value="confirm">Save</button></div>
+  </form>
+</dialog>
+<dialog id="library-dialog" aria-labelledby="library-dialog-heading"><form method="dialog">
+  <h2 id="library-dialog-heading">Save query</h2><p id="library-dialog-message"></p>
+  <label id="library-name-label" for="library-name">Query name</label><input id="library-name" maxlength="160" required>
+  <p class="hint" id="library-error" role="alert" hidden></p>
+  <div class="query-dialog-actions"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn" id="library-copy" value="copy">Save a copy</button><button class="btn btn-primary" id="library-confirm" value="confirm">Save query</button></div>
+</form></dialog>
+<script type="module" src="{{ asset_url('js/workspace.js') }}"></script>
+{% endblock %}
