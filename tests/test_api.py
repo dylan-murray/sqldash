@@ -659,6 +659,7 @@ def test_pages_link_every_app_stylesheet_in_cascade_order(client):
         "11-setup.css",
         "12-file-browser.css",
         "13-states.css",
+        "14-interactions.css",
     ]
     css_dir = Path(sqldash.__file__).parent / "static/css/app"
     on_disk = sorted(p.name for p in css_dir.glob("*.css"))

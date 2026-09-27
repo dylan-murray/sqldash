@@ -14,6 +14,7 @@ from sqldash.api.routes_config import profile_health, repo_rows
 from sqldash.api.routes_events import semantic_layer_event
 from sqldash.models.source import source_label
 from sqldash.params import filter_ui_default, select_choices
+from sqldash.project.drill import dashboard_href
 from sqldash.project.sources import distinct_picker_sources, picker_sources
 from sqldash.project.store import InvalidDashboardError, NotFoundError, compute_etag
 from sqldash.secrets import profiles_path
@@ -496,6 +497,18 @@ async def query_page(request: Request, name: str, tile: str | None = None):
     )
 
 
+def _drill_origin(store, name: str, origin: str | None) -> dict | None:
+    """The dashboard a drill came from, for the breadcrumb back to it. Only a name the
+    store serves counts, so the query string cannot put arbitrary text or links there."""
+    if not origin or origin == name or origin not in store.discover():
+        return None
+    try:
+        title = store.load(origin)[0].title
+    except Exception:
+        return None
+    return {"name": origin, "title": title, "href": dashboard_href(origin)}
+
+
 @router.get("/d/{name:dname}", response_class=HTMLResponse)
 async def dashboard_page(request: Request, name: str):
     store = request.app.state.store
@@ -534,7 +547,7 @@ async def dashboard_page(request: Request, name: str):
         "tiles": tiles,
         "layout": dashboard.layout,
     }
-    data = client_payload(name, dashboard, etag, request.app.state.layer)
+    data = client_payload(name, dashboard, etag, request.app.state.layer, store)
     data["metrics_etag"] = request.app.state.watcher.revision(semantic_layer_event(name))
     payload = script_json(data)
     style = dashboard.page_style()
@@ -545,6 +558,7 @@ async def dashboard_page(request: Request, name: str):
         "dashboard.html",
         {
             "name": name,
+            "drill_from": _drill_origin(store, name, request.query_params.get("from")),
             "dashboard": view,
             "dashboard_json": payload,
             "dash_css": dash_css,

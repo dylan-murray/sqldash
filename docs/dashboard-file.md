@@ -49,6 +49,57 @@ the warehouse sees it.
 A `daterange` filter exposes `<name>_start` and `<name>_end`. A `select` filter can
 take static `options:` or `options_sql:`.
 
+## Drill-down
+
+A `drill:` block on a chart or table tile turns its bars, points, slices and rows into
+links to another dashboard, opened with that dashboard's filters set from what was
+clicked:
+
+```yaml
+tiles:
+  - title: Revenue by customer
+    chart: bar
+    sql: |
+      SELECT customer_name, customer_id, SUM(amount) AS revenue
+      FROM orders
+      WHERE order_date BETWEEN {{ dates_start }} AND {{ dates_end }}
+      GROUP BY 1, 2
+    drill:
+      dashboard: customer_detail
+      filters:
+        customer: customer_id
+        period: {filter: dates}
+```
+
+Each key under `filters:` is a filter declared on the destination. A bare string is a
+column of the clicked row, and any column of the result works, not only the one on
+the axis: clicking the bar for a customer name above passes that row's
+`customer_id`. `{filter: name}` carries this dashboard's current value of one of its
+own filters instead, so the date range someone was looking at comes along. A date
+range only carries into a date range, and a number or date filter only takes a filter
+of its own type.
+
+`dashboard:` is the name in the destination's `/d/<name>` URL. In a workspace a bare
+name stays inside the same repo, and `repo/name` reaches another one. Leave
+`dashboard:` out to drill into the same dashboard, which keeps its other filters.
+`drill: customer_detail` on its own is shorthand for a link with no filters mapped.
+
+On a table the link sits in one column: `column:` picks it, and it defaults to the
+first mapped column. `new_tab: true` opens the destination in a new tab; a
+Cmd- or Ctrl-click does that for any drill. A chart takes keyboard focus, the arrow
+keys move between points and Enter follows the one that is highlighted. The
+destination shows a breadcrumb back to where the drill started, and going back
+restores the filters that dashboard had.
+
+`sqldash lint` resolves every drill: an unknown dashboard, a filter the destination
+does not declare, or a value that cannot fill the filter it names is an error, not
+a link that opens unfiltered. The MCP `validate_dashboard` check also runs the
+tile's query and names any mapped column it does not return. In the browser, a
+click on a row whose value is null, or a value the destination's options do not
+include, says so instead of navigating.
+
+Snapshots render each dashboard to a PNG, so drill links do not carry into them.
+
 ## Chart types
 
 `line`, `bar`, `area`, `scatter`, `pie`, `histogram`, `heatmap`, `big_number`, `table`, plus

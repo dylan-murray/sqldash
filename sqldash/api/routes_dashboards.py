@@ -161,7 +161,9 @@ async def get_dashboard(request: Request, name: str):
     # `etag` only, and the whole-file `PUT` is driven from a file the caller
     # already holds.
     dashboard, _text, etag = request.app.state.store.load(name)
-    payload = client_payload(name, dashboard, etag, request.app.state.layer)
+    payload = client_payload(
+        name, dashboard, etag, request.app.state.layer, request.app.state.store
+    )
     return payload
 
 

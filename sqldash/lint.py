@@ -45,6 +45,7 @@ from sqldash.params import (
     resolve_daterange_preset,
     validate_template,
 )
+from sqldash.project.drill import plan_drill
 from sqldash.project.sources import (
     attach_dir_missing,
     database_file_missing,
@@ -54,6 +55,7 @@ from sqldash.project.sources import (
 from sqldash.project.store import (
     DashboardStore,
     InvalidDashboardError,
+    Store,
     parse_dashboard,
     read_dashboard_text,
 )
@@ -1094,7 +1096,12 @@ def _lint_orphans(dashboard, file: str, usage: _TileUsage) -> list[Finding]:
 
 
 def lint_project(
-    store: DashboardStore, layer: SemanticLayer, *, check_sql: bool = False
+    store: DashboardStore,
+    layer: SemanticLayer,
+    *,
+    check_sql: bool = False,
+    workspace: Store | None = None,
+    repo: str | None = None,
 ) -> list[Finding]:
     """Lint everything discoverable: metrics.yaml, every dashboard, and the
     references between filters, queries, tiles, and metrics.
@@ -1102,17 +1109,24 @@ def lint_project(
     ``check_sql`` (``sqldash lint --strict``) zero-row probes authored SQL
     tools and every metrics.yaml metric's compiled SQL against the warehouse,
     the same path ``validate_dashboard`` uses for tiles (#430). Both probes
-    share one registry, so a strict run opens one connection to the source."""
+    share one registry, so a strict run opens one connection to the source.
+
+    In a workspace, ``workspace`` and ``repo`` let a drill link reach the other
+    repos: names resolve the way the served workspace resolves them."""
     registry = ExecutionRegistry(max_workers=1) if check_sql else None
     try:
-        return _lint_project(store, layer, registry)
+        return _lint_project(store, layer, registry, workspace, repo)
     finally:
         if registry is not None:
             registry.shutdown()
 
 
 def _lint_project(
-    store: DashboardStore, layer: SemanticLayer, registry: ExecutionRegistry | None
+    store: DashboardStore,
+    layer: SemanticLayer,
+    registry: ExecutionRegistry | None,
+    workspace: Store | None = None,
+    repo: str | None = None,
 ) -> list[Finding]:
     findings: list[Finding] = []
 
@@ -1150,7 +1164,7 @@ def _lint_project(
         )
 
     inline_definitions: dict[str, list[str]] = {}
-    for _name, path in dashboards.items():
+    for name, path in dashboards.items():
         file = path.name
         try:
             dashboard = parse_dashboard(read_dashboard_text(path))
@@ -1160,6 +1174,8 @@ def _lint_project(
         for metric_name in dashboard.metrics:
             inline_definitions.setdefault(metric_name, []).append(file)
         findings.extend(lint_dashboard(dashboard, file, project_metrics, files_dir=path.parent))
+        address = f"{repo}/{name}" if repo else name
+        findings.extend(lint_drills(workspace or store, address, dashboard, file))
 
     findings.extend(lint_agents(store, layer, registry))
 
@@ -1185,6 +1201,39 @@ def _lint_project(
                 )
             )
     return findings
+
+
+def lint_drills(store: Store, name: str | None, dashboard, file: str) -> list[Finding]:
+    """Every drill link resolves: its dashboard exists and loads, each mapped filter
+    is declared there, and each value can fill the filter it names."""
+    findings: list[Finding] = []
+    for tile in dashboard.tiles:
+        plan = plan_drill(store, name, dashboard, tile)
+        if plan is None:
+            continue
+        findings.extend(Finding(file, "error", f"tile '{tile.id}': {e}") for e in plan["errors"])
+        findings.extend(
+            Finding(file, "warning", f"tile '{tile.id}': {w}") for w in plan["warnings"]
+        )
+    return findings
+
+
+def _drill_column_errors(dashboard, columns: dict[str, set[str]]) -> list[str]:
+    """A drill reading a column the tile's query does not return would build no link
+    at all, so where the probe knows the columns, say which one is missing."""
+    errors: list[str] = []
+    for tile in dashboard.tiles:
+        known = columns.get(tile.id)
+        if tile.drill is None or known is None:
+            continue
+        wanted = dict.fromkeys([*tile.drill.mapped_columns(), tile.drill.column])
+        for column in wanted:
+            if column and column not in known:
+                errors.append(
+                    f"tile '{tile.id}': drill reads column '{column}', which its query does "
+                    f"not return (columns: {', '.join(sorted(known))})"
+                )
+    return errors
 
 
 def lint_agents(
@@ -2024,6 +2073,10 @@ def validate_dashboard(
     )
     available, ambiguous = _metric_catalog(layer, repo)
     findings = lint_dashboard(dashboard, "dashboard", available, files_dir=base_dir)
+    address = name
+    if name and repo and not name.startswith(f"{repo}/"):
+        address = f"{repo}/{_owning_repo(layer, name)[1]}"
+    findings.extend(lint_drills(store, address, dashboard, "dashboard"))
     errors = [f.message for f in findings if f.level == "error"]
     lint_findings = [f"{f.level}: {f.message}" for f in findings if f.level != "error"]
     if unanchored:
@@ -2055,6 +2108,7 @@ def validate_dashboard(
             if e not in errors and not _sql_error_already_linted(e, errors, dashboard)
         )
         lint_findings.extend(f"warning: {w}" for w in _chart_column_warnings(dashboard, columns))
+        errors.extend(_drill_column_errors(dashboard, columns))
         errors.extend(_probe_compiled(registry, dashboard.source, base_dir, compiled))
         errors.extend(_dry_run_metric_tiles(registry, layer, dashboard, base_dir, repo))
     return {

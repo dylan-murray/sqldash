@@ -1,0 +1,93 @@
+/* ---------- drill-down: tile hint, linked cells, breadcrumb ---------- */
+
+.tile-drill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 45%;
+  height: 22px;
+  padding: 0 8px 0 6px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 530;
+  color: var(--ink-muted);
+  white-space: nowrap;
+  transition: color 0.15s var(--ease), background 0.15s var(--ease);
+}
+.tile-drill span { overflow: hidden; text-overflow: ellipsis; }
+.tile-drill svg { flex: none; }
+.tile:hover .tile-drill,
+.tile:focus-within .tile-drill {
+  color: color-mix(in oklab, var(--wcolor, var(--accent)), var(--ink-1) 25%);
+  background: color-mix(in oklab, var(--wcolor, var(--accent)), transparent 90%);
+}
+.tile-drill.is-broken,
+.tile:hover .tile-drill.is-broken {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+body.editing .tile-drill { display: none; }
+
+.tile-body .chart-mount:focus-visible,
+.big-number.is-drill:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+.big-number.is-drill { cursor: pointer; border-radius: var(--radius-sm); }
+.big-number.is-drill .value { transition: color 0.15s var(--ease); }
+.big-number.is-drill:hover .value {
+  color: color-mix(in oklab, var(--wcolor, var(--accent)), var(--ink-1) 30%);
+}
+
+table.results td.has-link { padding: 0; }
+table.results a.cell-link {
+  display: block;
+  padding: 7px 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: color-mix(in oklab, var(--wcolor, var(--accent)), var(--ink-1) 30%);
+  font-weight: 540;
+  text-decoration: none;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+table.results a.cell-link::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 6px;
+  border-top: 1.5px solid currentColor;
+  border-right: 1.5px solid currentColor;
+  transform: translateY(-1px) rotate(45deg);
+  opacity: 0;
+  transition: opacity 0.15s var(--ease);
+}
+table.results tr:hover a.cell-link { text-decoration-line: underline; }
+table.results tr:hover a.cell-link::after,
+table.results a.cell-link:focus-visible::after { opacity: 0.7; }
+table.results a.cell-link:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
+
+.topbar .crumb-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px 0 8px;
+  border-radius: 999px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--ink-2);
+  text-decoration: none;
+  min-width: 0;
+  max-width: 28ch;
+  white-space: nowrap;
+  transition: color 0.15s var(--ease), background 0.15s var(--ease);
+}
+.topbar .crumb-link span { overflow: hidden; text-overflow: ellipsis; }
+.topbar .crumb-link svg { flex: none; color: var(--ink-muted); }
+.topbar .crumb-link:hover { background: var(--accent-soft); color: var(--ink-1); }
+.topbar .crumb-link:hover svg { color: var(--accent); }
+.topbar .crumb-link:focus-visible { outline: none; box-shadow: var(--focus-ring); }
