@@ -11,13 +11,14 @@ import {
   translate,
 } from "/static/js/charts.js";
 import { enhanceSelects } from "/static/js/dropdown.js";
+import { binValues, MAX_BINS } from "/static/js/histogram.js";
 
 const CHART_TYPES = [
-  "line", "bar", "area", "scatter", "pie", "heatmap", "big_number", "table",
+  "line", "bar", "area", "scatter", "pie", "histogram", "heatmap", "big_number", "table",
 ];
 const TYPE_LABELS = {
-  line: "Line", bar: "Bar", area: "Area", scatter: "Scatter",
-  pie: "Pie", heatmap: "Heatmap", big_number: "Number", table: "Table",
+  line: "Line", bar: "Bar", area: "Area", scatter: "Scatter", pie: "Pie",
+  histogram: "Histogram", heatmap: "Heatmap", big_number: "Number", table: "Table",
 };
 const NUMERIC = new Set(["integer", "float", "decimal"]);
 // Column encodings: filled in from the result for the preview, but only
@@ -66,11 +67,13 @@ function isSet(value) {
   return value != null && !(Array.isArray(value) && !value.length);
 }
 
-function numberInput(value, key, { placeholder = "" } = {}) {
+function numberInput(value, key, { min, max, step = "any", placeholder = "" } = {}) {
   const input = document.createElement("input");
   input.type = "number";
   input.dataset.spec = key;
-  input.step = "any";
+  input.step = step;
+  if (min != null) input.min = min;
+  if (max != null) input.max = max;
   input.placeholder = placeholder;
   input.value = value ?? "";
   return input;
@@ -78,7 +81,7 @@ function numberInput(value, key, { placeholder = "" } = {}) {
 
 function optionSelect(options, selected, key) {
   const select = document.createElement("select");
-  select.dataset.spec = key;
+  if (key) select.dataset.spec = key;
   for (const [value, text] of options) {
     const picked = (selected ?? "") === value;
     select.appendChild(new Option(text, value, picked, picked));
@@ -94,6 +97,12 @@ const AGGREGATES = [
   ["min", "Min"],
   ["max", "Max"],
 ];
+
+function binMode(spec) {
+  if (spec.bin_width != null) return "width";
+  if (spec.bins != null) return "count";
+  return "auto";
+}
 
 function checkbox(checked, key) {
   const box = document.createElement("input");
@@ -251,6 +260,25 @@ export class ChartBuilder {
       if (spec.palette === "diverging") {
         fields.push(["Midpoint", numberInput(spec.midpoint, "midpoint", { placeholder: "0" })]);
       }
+    } else if (type === "histogram") {
+      fields.push(["Column", this.columnSelect("x", spec.x)]);
+      const mode = binMode(spec);
+      const modeSelect = optionSelect(
+        [["auto", "Auto"], ["count", "Bin count"], ["width", "Bin width"]],
+        mode
+      );
+      modeSelect.dataset.binMode = "";
+      fields.push(["Bins", modeSelect]);
+      if (mode === "count") {
+        fields.push(["Count", numberInput(spec.bins, "bins", { min: 1, max: MAX_BINS, step: 1 })]);
+      } else if (mode === "width") {
+        fields.push(["Width", numberInput(spec.bin_width, "bin_width", { min: 0 })]);
+        fields.push(["Start at", numberInput(spec.bin_start, "bin_start", { placeholder: "0" })]);
+      }
+      fields.push([
+        "Show",
+        optionSelect([["", "Count"], ["percent", "Percent"]], spec.measure, "measure"),
+      ]);
     } else if (type === "big_number") {
       fields.push(["Value", this.columnSelect("value", spec.value)]);
     }
@@ -280,15 +308,19 @@ export class ChartBuilder {
         this._authored.add(key);
         if (key === "orientation") this._spec.orientation = input.checked ? "horizontal" : null;
         else if (input.type === "checkbox") this._spec[key] = input.checked;
-        else if (input.type === "number") {
-          const n = input.value === "" ? null : Number(input.value);
-          this._spec[key] = Number.isFinite(n) ? n : null;
-        } else this._spec[key] = input.value || null;
+        else if (input.type === "number") this._spec[key] = this.numberSetting(key, input.value);
+        else this._spec[key] = input.value || null;
         if (key === "palette" && this._spec.palette !== "diverging") this._spec.midpoint = null;
         if (key === "palette") this.renderEncodings();
         this.renderPreview();
         this.onChange();
       });
+    });
+    this.encodingEl.querySelector("[data-bin-mode]")?.addEventListener("change", (e) => {
+      this.setBinMode(e.target.value);
+      this.renderEncodings();
+      this.renderPreview();
+      this.onChange();
     });
     this.encodingEl.querySelectorAll("[data-spec-y]").forEach((box) => {
       box.addEventListener("change", () => {
@@ -434,6 +466,34 @@ export class ChartBuilder {
     });
     wrap.appendChild(add);
     return wrap;
+  }
+
+  numberSetting(key, text) {
+    if (text === "") return null;
+    const n = Number(text);
+    if (!Number.isFinite(n)) return null;
+    if (key === "bins") return Math.min(MAX_BINS, Math.max(1, Math.round(n)));
+    if (key === "bin_width") return n > 0 ? n : null;
+    return n;
+  }
+
+  setBinMode(mode) {
+    const spec = this._spec;
+    const column = this.result?.columns.findIndex((c) => c.name === spec.x) ?? -1;
+    const values = column >= 0 ? this.result.rows.map((row) => row[column]) : [];
+    const auto = binValues(values, {});
+    if (mode === "count") {
+      spec.bins = spec.bins ?? (auto.bins.length || 10);
+      spec.bin_width = null;
+      spec.bin_start = null;
+    } else if (mode === "width") {
+      spec.bin_width = spec.bin_width ?? (auto.width ? Number(auto.width.toPrecision(12)) : 1);
+      spec.bins = null;
+    } else {
+      spec.bins = null;
+      spec.bin_width = null;
+      spec.bin_start = null;
+    }
   }
 
   renderPreview() {

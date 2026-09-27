@@ -51,8 +51,51 @@ take static `options:` or `options_sql:`.
 
 ## Chart types
 
-`line`, `bar`, `area`, `scatter`, `pie`, `heatmap`, `big_number`, `table`, plus
+`line`, `bar`, `area`, `scatter`, `pie`, `histogram`, `heatmap`, `big_number`, `table`, plus
 markdown tiles (just a `markdown:` key).
+
+### Histograms
+
+A histogram counts how many rows fall in each range of one numeric column, so a
+distribution needs no bucket SQL. The query returns the raw values:
+
+```yaml
+- title: Order values
+  format: currency
+  chart: {type: histogram, x: amount, bin_width: 25}
+  sql: SELECT amount FROM orders
+```
+
+| Key | Meaning |
+|---|---|
+| `x` | The numeric column to bin. Defaults to the first numeric column. |
+| `bins` | Exactly this many equal-width bins from the smallest value to the largest (1 to 200). |
+| `bin_width` | Bins this wide, with edges on multiples of the width. |
+| `bin_start` | Shifts the `bin_width` edges so one lands on this value. Needs `bin_width`. |
+| `measure` | `count` (the default) or `percent`, each bin's share of the binned values. |
+
+Set `bins` or `bin_width`, not both. With neither, sqldash picks a rounded width
+(1, 2, 2.5 or 5 times a power of ten) for about log2(n) + 1 bins. A `bin_width`
+that would need more than 200 bins over the data's range falls back to automatic
+bins, and the chart says so.
+
+Every bin includes its lower edge and excludes its upper one, except the last,
+which includes both, so the largest value always has a bin. With `bin_width: 10`,
+a 10 lands in 10 to 20, not 0 to 10, and negative values bin the same way
+(-0.5 lands in -10 to 0). A column where every value is the same draws one bar at
+that value. Nulls and values that are not finite numbers are left out, never
+counted as zero, and the line above the chart says how many rows were binned and
+how many were left out. The bin counts always add up to that number.
+
+Binning happens in the browser, over the rows the query returned. When the row
+cap cut the result short, the chart says it binned only the first rows and is not
+the full distribution. To bin a table bigger than the cap, raise it with
+`sqldash serve --row-limit`, or bucket in SQL and draw a `bar` chart. The CSV
+download is always the raw rows, not the bins.
+
+`bins`, `bin_width`, `bin_start` and `measure` are histogram keys, and
+`sqldash lint` rejects them on any other chart type. A histogram takes no `y` or
+`group_by`, since the count is its value.
 
 ### Heatmaps
 
@@ -161,7 +204,8 @@ yet is still on the chart. A category marker that the result does not contain is
 off rather than drawn in the wrong place. It matches a category exactly, except that
 a date finds its day on a timestamp column a bar chart draws as categories. A number
 marks the category with that value, not the position. On a narrow tile a line keeps
-its label and drops the number beside it. `sqldash lint` rejects references on `pie`, `big_number` and `table` tiles,
+its label and drops the number beside it. `sqldash lint` rejects references on `pie`, `histogram`, `heatmap`, `big_number` and
+`table` tiles,
 a metric that does not exist, a trailing-window metric on a dashboard with a date range
 (a window is one value as of a day, not a value over a range), a band that is not a
 pair, and an entry with no position or more than one. The chart builder has the same

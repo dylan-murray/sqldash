@@ -3061,11 +3061,12 @@ def test_workspace_chart_types_each_fit_their_label(page, tmp_path_factory, widt
         rows = frame.eval_on_selector_all(
             "#qb-type .seg-btn", "els => new Set(els.map(e => e.offsetTop)).size"
         )
-        assert rows <= 2
+        assert rows <= 3
         widths = frame.eval_on_selector_all(
             "#qb-type .seg-btn", "els => els.map(e => e.getBoundingClientRect().width)"
         )
         assert max(widths) - min(widths) < 1, widths
+        assert len(widths) % rows == 0, (len(widths), rows)
     finally:
         _stop_server(server, thread, page)
 
