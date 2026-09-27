@@ -43,9 +43,9 @@ export function rowForPoint(spec, result, point) {
   return rows.find((row) => String(row[key]) === String(point.name)) ?? null;
 }
 
-function valueText(value, type, column) {
+export function clickValue(value, type, column) {
   if (value === null || value === undefined || value === "") {
-    return { error: `${column} is empty here, so there is nothing to drill with` };
+    return { error: `${column} is empty here, so there is no value to use` };
   }
   const text = typeof value === "object" ? JSON.stringify(value) : String(value);
   if (type === "number" && !NUMBER_TEXT.test(text.trim())) {
@@ -107,7 +107,7 @@ export function drillUrl(plan, row, columns, context) {
     } else {
       const at = columns.findIndex((c) => c.name === param.column);
       if (at < 0) return { error: `column '${param.column}' is not in this tile's result` };
-      const value = valueText(row?.[at], param.type, param.column);
+      const value = clickValue(row?.[at], param.type, param.column);
       if (value.error) return { error: value.error };
       text = value.text;
       kind = valueKind(columns[at].type);

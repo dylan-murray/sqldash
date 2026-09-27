@@ -780,7 +780,7 @@ def test_editor_managed_keys_stay_in_step_with_the_tile_model():
     from sqldash.project.store import EDITOR_MANAGED_TILE_KEYS
 
     # Authored config the editor does not send, and which must never be pruned.
-    preserved = {"id", "format", "compare", "grain", "drill"}
+    preserved = {"id", "format", "compare", "grain", "drill", "cross_filter"}
 
     assert set(Tile.model_fields) >= EDITOR_MANAGED_TILE_KEYS, (
         "EDITOR_MANAGED_TILE_KEYS names a field the Tile model does not have"

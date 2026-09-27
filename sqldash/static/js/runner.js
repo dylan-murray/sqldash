@@ -12,6 +12,16 @@ import {
   translate,
 } from "/static/js/charts.js";
 import {
+  activeValues,
+  crossFilterChip,
+  crossFilterPlan,
+  dimUnpicked,
+  offValue,
+  picked,
+  rowIsPicked,
+  toggled,
+} from "/static/js/crossfilter.js";
+import {
   chartKeys,
   drillUrl,
   followDrill,
@@ -204,7 +214,9 @@ export function renderTile(el, tile, result, previous = null) {
     const plan = drillPlan(tile.id);
     if (spec.type === "big_number") renderBigNumber(body, spec, result);
     else {
-      const cells = tableDrillCells(plan, result, drillContext, (m) => toast(m, "error"));
+      const cells = plan
+        ? tableDrillCells(plan, result, drillContext, (m) => toast(m, "error"))
+        : tableCrossFilterCells(crossPlan(tile), result);
       renderTable(body, spec, result, { onCell: cells, onRows: cells?.onRows });
     }
     if (spec.type === "big_number") {
@@ -243,11 +255,14 @@ export function renderTile(el, tile, result, previous = null) {
   const forced = slot && slot !== 1 ? cssVar(`--series-${slot}`) : undefined;
   const option = styleCompareSeries(translate(spec, result, forced, mount.clientHeight, mount.clientWidth));
   chart.setOption(option, { notMerge: true });
+  dimCrossFilteredMarks(chart, tile, spec, result);
   markEmptyChart(body, option);
   if (drillPlan(tile.id)) attachDrill(chart, mount, tile, spec, result);
+  else if (crossPlan(tile)) attachCrossFilterClicks(chart, mount, tile, spec, result);
   else {
     resetChartKeys(mount);
-    attachCrossFilter(chart, spec, result);
+    if (tile.cross_filter === false) chart.off("click");
+    else attachCrossFilter(chart, spec, result);
   }
   // A truncated table says so; a truncated chart just drew a shorter line, and
   // a line that stops early reads as the data ending rather than the row cap.
@@ -474,10 +489,136 @@ function attachBigNumberDrill(body, tile, spec, result) {
   });
 }
 
-export function markDrillTiles() {
+export function markTileClicks() {
   for (const tile of dashboard.tiles) {
     const el = document.querySelector(`.tile[data-tile-id="${CSS.escape(tile.id)}"]`);
-    if (el) markDrillTile(el, drillPlan(tile.id));
+    if (!el) continue;
+    markDrillTile(el, drillPlan(tile.id));
+    markCrossFilterTile(el, tile);
+  }
+}
+
+function crossPlan(tile) {
+  return crossFilterPlan(tile, dashboard.filters);
+}
+
+function filterInput(name) {
+  return document.querySelector(`.filter-bar [data-filter="${CSS.escape(name)}"]`);
+}
+
+function crossOffs(plan) {
+  const offs = {};
+  for (const { name, def } of plan.entries) {
+    const input = filterInput(name);
+    const options = input?.tagName === "SELECT" ? [...input.options].map((o) => o.value) : [];
+    offs[name] = offValue(def, options);
+  }
+  return offs;
+}
+
+function crossActive(plan) {
+  return plan.errors.length ? null : activeValues(plan, filterValues(), crossOffs(plan));
+}
+
+function setFilters(next) {
+  for (const [name, value] of Object.entries(next)) {
+    const input = filterInput(name);
+    if (!input || input.value === value) continue;
+    const before = input.value;
+    input.value = value;
+    if (input.value !== value) {
+      input.value = before;
+      toast(`${filterLabel(name)} has no '${value}' to filter to`, "error");
+      continue;
+    }
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+}
+
+function crossFilterFrom(plan, row, columns) {
+  if (plan.errors.length) {
+    toast(plan.errors[0], "error");
+    return;
+  }
+  const { values, error } = picked(plan, row, columns);
+  if (error) {
+    toast(error, "error");
+    return;
+  }
+  setFilters(toggled(plan, values, filterValues(), crossOffs(plan)));
+}
+
+function attachCrossFilterClicks(chart, mount, tile, spec, result) {
+  const plan = crossPlan(tile);
+  const pick = (point) => crossFilterFrom(plan, rowForPoint(spec, result, point), result.columns);
+  chart.off("click");
+  chart.on("click", (params) => {
+    if (params.componentType === "series") pick(params);
+  });
+  const labels = plan.entries.map(({ def }) => def.label || def.name).join(" and ");
+  const what = tile.title || "this chart";
+  chartKeys(mount, chart, `${what}. Arrow keys pick a point, Enter filters by ${labels}`, pick);
+}
+
+function dimCrossFilteredMarks(chart, tile, spec, result) {
+  const plan = crossPlan(tile);
+  const active = plan && crossActive(plan);
+  if (!active) return;
+  chart.setOption({ series: dimUnpicked(chart.getOption(), spec, result, plan, active) });
+}
+
+function tableCrossFilterCells(plan, result) {
+  if (!plan || plan.errors.length) return undefined;
+  const column = plan.entries[0]?.column;
+  const at = result.columns.findIndex((c) => c.name === column);
+  if (at < 0) {
+    toast(`cross_filter column '${column}' is not in this tile's result`, "error");
+    return undefined;
+  }
+  const active = crossActive(plan);
+  const labels = plan.entries.map(({ def }) => def.label || def.name).join(" and ");
+  return (td, row, index) => {
+    if (index !== at) return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "cell-filter";
+    button.append(...td.childNodes);
+    td.replaceChildren(button);
+    td.classList.add("has-filter");
+    td.tabIndex = -1;
+    const isPicked = Boolean(active) && rowIsPicked(plan, row, result.columns, active);
+    td.classList.toggle("is-picked", isPicked);
+    button.setAttribute("aria-pressed", String(isPicked));
+    button.title = isPicked ? `Clear ${labels}` : `Filter by ${labels}`;
+    button.addEventListener("click", (e) => {
+      e.stopPropagation();
+      crossFilterFrom(plan, row, result.columns);
+    });
+    button.addEventListener("keydown", (e) => e.stopPropagation());
+  };
+}
+
+function markCrossFilterTile(el, tile) {
+  const head = el.querySelector(".tile-head");
+  head?.querySelector(".tile-xf")?.remove();
+  const plan = crossPlan(tile);
+  if (!head || !plan) return;
+  const active = crossActive(plan);
+  const chip = crossFilterChip(plan, active);
+  if (active) {
+    chip.addEventListener("click", () => setFilters(crossOffs(plan)));
+  }
+  head.querySelector(".tile-actions")?.before(chip);
+}
+
+function refreshCrossFilterTiles(affected) {
+  for (const tile of dashboard.tiles) {
+    if (!crossPlan(tile)) continue;
+    const el = document.querySelector(`.tile[data-tile-id="${CSS.escape(tile.id)}"]`);
+    if (!el) continue;
+    markCrossFilterTile(el, tile);
+    const result = tileResults.get(tile.id);
+    if (result && !affected.has(tile.id)) renderTile(el, tile, result, tilePrevResults.get(tile.id));
   }
 }
 
@@ -792,6 +933,7 @@ function queueFilterRun(paramName) {
     syncFiltersToUrl();
     refreshDrillLinks();
     runTiles([...affected.values()]);
+    refreshCrossFilterTiles(affected);
   }, 60);
 }
 
@@ -995,7 +1137,7 @@ function configureRefresh() {
 configureRefresh();
 
 applyTileHues();
-markDrillTiles();
+markTileClicks();
 initDrillCrumb();
 
 import("/static/js/dropdown.js").then(({ enhanceSelects }) => enhanceSelects());

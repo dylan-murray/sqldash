@@ -1,7 +1,9 @@
-"""Drill-down in a real browser: a bar and a table cell open the destination
-dashboard filtered to what was clicked, the date range comes along, the
-breadcrumb goes back to the filters the overview had, and a broken link or a
-value the destination cannot show says so instead of opening it unfiltered."""
+"""Drill-down and cross-filter in a real browser. A bar and a table cell open the
+destination dashboard filtered to what was clicked, the date range comes along,
+the breadcrumb goes back to the filters the overview had, and a broken link or a
+value the destination cannot show says so instead of opening it unfiltered. A
+cross-filter click sets this dashboard's filter, re-queries the tiles that read
+it, dims the marks it left out, and the same click or the chip clears it."""
 
 from urllib.parse import parse_qs, urlparse
 
@@ -49,7 +51,17 @@ def served(tmp_path_factory):
     table = "  - title: Recent orders\n    chart: table\n"
     linked = DRILL.replace("      filters:", "      column: category\n      filters:")
     text = text.replace(table, table + linked)
+    pie = "  - title: Revenue share by region\n    chart: pie\n"
+    text = text.replace(pie, pie + "    cross_filter: {region: region}\n")
     text += (
+        "\n  - title: Region table\n"
+        "    chart: table\n"
+        "    cross_filter: {region: region}\n"
+        '    sql: "SELECT region, COUNT(*) AS orders FROM orders GROUP BY 1 ORDER BY 1"\n'
+        "\n  - title: Muted regions\n"
+        "    chart: bar\n"
+        "    cross_filter: false\n"
+        '    sql: "SELECT region, COUNT(*) AS orders FROM orders GROUP BY 1 ORDER BY 1"\n'
         "\n  - title: Broken drill\n"
         "    chart: bar\n"
         "    drill: {dashboard: category_detail, filters: {categry: category}}\n"
@@ -499,3 +511,115 @@ def test_sorting_a_drill_table_keeps_only_its_visible_links(page, edges):
     links = page.locator('.tile[data-tile-id="many"] a.cell-link').count()
     assert links == 100
     assert count == 100
+
+    assert _query(page)["f_rate"] == "1"
+
+
+def _slice(page, name):
+    page.locator('.tile[data-tile-id="revenue_share_by_region"]').scroll_into_view_if_needed()
+    page.wait_for_function(
+        """() => {
+            const m = document.querySelector(
+                '.tile[data-tile-id="revenue_share_by_region"] .chart-mount');
+            return Boolean(m && echarts.getInstanceByDom(m));
+        }"""
+    )
+    return page.evaluate(
+        """(name) => {
+          const mount = document.querySelector(
+              '.tile[data-tile-id="revenue_share_by_region"] .chart-mount');
+          const chart = echarts.getInstanceByDom(mount);
+          const data = chart.getModel().getSeriesByIndex(0).getData();
+          const layout = data.getItemLayout(data.indexOfName(name));
+          const mid = (layout.startAngle + layout.endAngle) / 2;
+          const radius = (layout.r0 + layout.r) / 2;
+          const r = mount.getBoundingClientRect();
+          return {
+            x: r.x + layout.cx + radius * Math.cos(mid),
+            y: r.y + layout.cy + radius * Math.sin(mid),
+          };
+        }""",
+        name,
+    )
+
+
+def _region(page):
+    return page.eval_on_selector('select[data-filter="region"]', "e => e.value")
+
+
+def _recent_regions(page):
+    return page.eval_on_selector_all(
+        '.tile[data-tile-id="recent_orders"] tbody tr td:nth-child(2)',
+        "cells => [...new Set(cells.map(c => c.textContent))]",
+    )
+
+
+def test_a_slice_cross_filters_the_dashboard_and_the_same_click_clears_it(page, served):
+    page.goto(f"{served}/d/demo")
+    _wait_tiles(page)
+    assert len(_recent_regions(page)) > 1
+    chip = page.locator('.tile[data-tile-id="revenue_share_by_region"] .tile-xf')
+    assert chip.text_content() == "Region"
+    point = _slice(page, "eu")
+    page.mouse.click(point["x"], point["y"])
+    page.wait_for_function("() => location.search.includes('f_region=eu')")
+    page.wait_for_function(
+        """() => [...document.querySelectorAll(
+            '.tile[data-tile-id="recent_orders"] tbody tr td:nth-child(2)')]
+            .every(c => c.textContent === 'eu')"""
+    )
+    assert _region(page) == "eu"
+    opacities = page.evaluate(
+        """() => {
+          const m = document.querySelector(
+              '.tile[data-tile-id="revenue_share_by_region"] .chart-mount');
+          return Object.fromEntries(echarts.getInstanceByDom(m).getOption().series[0].data
+              .map(d => [d.name, d.itemStyle?.opacity ?? 1]));
+        }"""
+    )
+    assert opacities["eu"] == 1
+    assert all(v < 1 for k, v in opacities.items() if k != "eu"), opacities
+    assert (
+        page.locator('.tile[data-tile-id="revenue_share_by_region"] button.tile-xf').text_content()
+        == "eu"
+    )
+    page.mouse.click(point["x"], point["y"])
+    page.wait_for_function("() => location.search.includes('f_region=all')")
+    page.wait_for_function(
+        """() => new Set([...document.querySelectorAll(
+            '.tile[data-tile-id="recent_orders"] tbody tr td:nth-child(2)')]
+            .map(c => c.textContent)).size > 1"""
+    )
+    assert chip.text_content() == "Region"
+    page.mouse.click(point["x"], point["y"])
+    page.wait_for_function("() => location.search.includes('f_region=eu')")
+    page.click('.tile[data-tile-id="revenue_share_by_region"] button.tile-xf')
+    page.wait_for_function("() => location.search.includes('f_region=all')")
+
+
+def test_a_table_cell_toggles_the_filter_and_marks_its_row(page, served):
+    page.goto(f"{served}/d/demo")
+    _wait_tiles(page)
+    cell = page.locator('.tile[data-tile-id="region_table"] button.cell-filter', has_text="us")
+    cell.focus()
+    page.keyboard.press("Enter")
+    page.wait_for_function("() => location.search.includes('f_region=us')")
+    picked = page.locator('.tile[data-tile-id="region_table"] td.is-picked')
+    picked.wait_for()
+    assert picked.text_content() == "us"
+    assert page.locator(".cell-pop").count() == 0
+    page.locator('.tile[data-tile-id="region_table"] button.cell-filter', has_text="us").click()
+    page.wait_for_function("() => location.search.includes('f_region=all')")
+    page.wait_for_function(
+        """() => !document.querySelector('.tile[data-tile-id="region_table"] td.is-picked')"""
+    )
+
+
+def test_cross_filter_false_turns_the_same_name_click_off(page, served):
+    page.goto(f"{served}/d/demo")
+    _wait_tiles(page)
+    bar = _bar(page, "muted_regions", 0)
+    page.mouse.click(bar["x"], bar["y"])
+    page.wait_for_timeout(500)
+    assert _region(page) == "all"
+    assert page.locator('.tile[data-tile-id="muted_regions"] .tile-xf').count() == 0

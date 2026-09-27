@@ -605,6 +605,7 @@ def lint_dashboard(
         findings.extend(lint_metric_trunc_macros(metric_name, definition, file))
     findings.extend(lint_relation_trunc_macros(dashboard.relations, file))
     findings.extend(_lint_filters(dashboard, file))
+    findings.extend(_lint_cross_filters(dashboard, file))
     findings.extend(_lint_query_templates(dashboard, file))
     tile_findings, usage = _lint_tiles(dashboard, file, available, project_metrics)
     findings.extend(tile_findings)
@@ -714,6 +715,41 @@ def _lint_filters(dashboard, file: str) -> list[Finding]:
                     f"{f.options} — use a listed value, or default: all (the off sentinel)",
                 )
             )
+    return findings
+
+
+def _lint_cross_filters(dashboard, file: str) -> list[Finding]:
+    """Each `cross_filter:` names a scalar filter of this dashboard. A tile whose own
+    query reads the filter it sets narrows itself to the one bar that was clicked."""
+    findings: list[Finding] = []
+    declared = {f.name: f for f in dashboard.filters}
+    for tile in dashboard.tiles:
+        for name in tile.cross_filter or {}:
+            target = declared.get(name)
+            where = f"tile '{tile.id}': cross_filter '{name}'"
+            if target is None:
+                listed = ", ".join(declared) or "none"
+                findings.append(
+                    Finding(file, "error", f"{where} is not a filter on this dashboard ({listed})")
+                )
+            elif target.type == "daterange":
+                findings.append(
+                    Finding(
+                        file,
+                        "error",
+                        f"{where} is a date range; a click sets one value, so map a select, "
+                        "text, number or date filter",
+                    )
+                )
+            elif tile.query and name in extract_params(dashboard.queries.get(tile.query, "")):
+                findings.append(
+                    Finding(
+                        file,
+                        "warning",
+                        f"{where} is also read by this tile's own query, so a click narrows "
+                        "the tile to the one value it set",
+                    )
+                )
     return findings
 
 
@@ -1218,19 +1254,22 @@ def lint_drills(store: Store, name: str | None, dashboard, file: str) -> list[Fi
     return findings
 
 
-def _drill_column_errors(dashboard, columns: dict[str, set[str]]) -> list[str]:
-    """A drill reading a column the tile's query does not return would build no link
-    at all, so where the probe knows the columns, say which one is missing."""
+def _click_column_errors(dashboard, columns: dict[str, set[str]]) -> list[str]:
+    """A drill or cross-filter reading a column the tile's query does not return
+    would do nothing on click, so where the probe knows the columns, say which."""
     errors: list[str] = []
     for tile in dashboard.tiles:
         known = columns.get(tile.id)
-        if tile.drill is None or known is None:
+        if known is None:
             continue
-        wanted = dict.fromkeys([*tile.drill.mapped_columns(), tile.drill.column])
-        for column in wanted:
+        reads = []
+        if tile.drill is not None:
+            reads += [("drill", c) for c in (*tile.drill.mapped_columns(), tile.drill.column)]
+        reads += [("cross_filter", c) for c in (tile.cross_filter or {}).values()]
+        for key, column in dict.fromkeys(reads):
             if column and column not in known:
                 errors.append(
-                    f"tile '{tile.id}': drill reads column '{column}', which its query does "
+                    f"tile '{tile.id}': {key} reads column '{column}', which its query does "
                     f"not return (columns: {', '.join(sorted(known))})"
                 )
     return errors
@@ -2149,7 +2188,7 @@ def validate_dashboard(
         tile_errors, metric_columns = _dry_run_metric_tiles(
             registry, layer, dashboard, base_dir, repo
         )
-        errors.extend(_drill_column_errors(dashboard, columns | metric_columns))
+        errors.extend(_click_column_errors(dashboard, columns | metric_columns))
         errors.extend(_probe_compiled(registry, dashboard.source, base_dir, compiled))
         errors.extend(tile_errors)
     return {

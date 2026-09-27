@@ -100,6 +100,42 @@ include, says so instead of navigating.
 
 Snapshots render each dashboard to a PNG, so drill links do not carry into them.
 
+## Cross-filtering
+
+`cross_filter:` makes a click set this dashboard's own filters instead of opening
+another one. Every tile that reads those filters runs again, and clicking the same
+bar, slice or row a second time turns them back off:
+
+```yaml
+tiles:
+  - title: Revenue share by region
+    chart: pie
+    sql: |
+      SELECT region, SUM(amount) AS revenue
+      FROM orders
+      WHERE order_date BETWEEN {{ dates_start }} AND {{ dates_end }}
+      GROUP BY 1
+    cross_filter:
+      region: region
+```
+
+Each key is a filter on this dashboard and each value is a column of the clicked
+row. Several keys set several filters from one click. A select turns off to `all`
+and any other filter to its default. The tile keeps showing everything and dims the
+marks outside the selection, and a chip in its header shows the value with a button
+that clears it. On a table the first mapped column becomes the toggle, and the
+picked row stays highlighted.
+
+A date range cannot be cross-filtered, since a click sets one value. `sqldash lint`
+errors on a filter the dashboard does not declare, and warns when the tile's own
+query reads the filter it sets, because then a click narrows the tile down to the
+one value it picked.
+
+Without `cross_filter:`, a click on a chart whose x axis (or pie label) has the same
+name as a select filter still sets that filter, as it always has. `cross_filter:
+false` turns that off for one tile, and a tile with `drill:` follows its link
+instead.
+
 ## Chart types
 
 `line`, `bar`, `area`, `scatter`, `pie`, `histogram`, `heatmap`, `big_number`, `table`, plus
