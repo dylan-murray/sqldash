@@ -17,8 +17,7 @@
 
 <p align="center">
   <a href="https://sqldash.dev"><b>sqldash.dev</b></a> ·
-  <a href="https://sqldash.dev/docs/">Docs</a> ·
-  <a href="https://sqldash.dev/docs/compare/">sqldash and dbt Charts</a>
+  <a href="https://sqldash.dev/docs/">Docs</a>
 </p>
 
 <h2></h2>
