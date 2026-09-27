@@ -7431,3 +7431,88 @@ def test_a_reference_to_a_metric_named_proto_uses_the_chart_format(page, tmp_pat
         assert page.evaluate(read).startswith("All  $"), page.evaluate(read)
     finally:
         _stop_server(server, thread, page)
+
+
+def _pick(page, label, value):
+    page.evaluate(
+        """([label, value]) => {
+          const select = document.querySelector(`select[aria-label="${label}"]`);
+          select.value = value;
+          select.dispatchEvent(new Event('change', {bubbles: true}));
+        }""",
+        [label, value],
+    )
+
+
+def test_combo_chart_draws_two_axes_and_the_builder_saves_it(page, tmp_path_factory):
+    root = tmp_path_factory.mktemp("combo")
+    (root / "d.yaml").write_text(
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        "tiles:\n"
+        "  - title: T\n"
+        "    chart:\n"
+        "      type: bar\n"
+        "      x: w\n"
+        "      y: [revenue, rate]\n"
+        "      format: {revenue: currency}\n"
+        "    sql: \"SELECT w, revenue, rate FROM (VALUES ('a', 50000, 0.25), ('b', 60000, NULL))"
+        ' t(w, revenue, rate)"\n'
+    )
+    app = create_app(root, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    try:
+        page.goto(f"http://127.0.0.1:{port}/d/d/query?tile=t", wait_until="load")
+        page.click("#run-btn")
+        page.wait_for_selector("#qb-preview canvas")
+        _pick(page, "Mark for rate", "line")
+        _pick(page, "Axis for rate", "right")
+        _pick(page, "Format for rate", "percent")
+        page.locator('input[aria-label="Legend name for rate"]').fill("Conversion")
+        page.locator('input[aria-label="Right axis title"]').fill("Rate")
+        preview = page.evaluate(
+            """() => {
+              const mount = document.querySelector('#qb-preview .chart-mount');
+              const option = echarts.getInstanceByDom(mount).getOption();
+              return {
+                types: option.series.map((s) => s.type),
+                axes: option.series.map((s) => s.yAxisIndex),
+                names: option.series.map((s) => s.name),
+                yAxes: option.yAxis.map((a) => a.name || null),
+              };
+            }"""
+        )
+        assert preview == {
+            "types": ["bar", "line"],
+            "axes": [0, 1],
+            "names": ["revenue", "Conversion"],
+            "yAxes": [None, "Rate"],
+        }, preview
+        page.click("#qb-add")
+        page.wait_for_url("**/d/d?edit=1")
+        text = (root / "d.yaml").read_text()
+        assert (
+            "      format: {revenue: currency, rate: percent}\n"
+            "      series: {rate: {type: line, axis: right, label: Conversion}}\n"
+            "      axes: {right: {title: Rate}}\n"
+        ) in text, text
+        _wait_tiles(page)
+        page.wait_for_function(
+            """() => {
+              const m = document.querySelector('.tile[data-tile-id="t"] .chart-mount');
+              return m && echarts.getInstanceByDom(m);
+            }"""
+        )
+        tile = page.evaluate(
+            """() => {
+              const m = document.querySelector('.tile[data-tile-id="t"] .chart-mount');
+              const option = echarts.getInstanceByDom(m).getOption();
+              return {
+                yAxes: option.yAxis.length,
+                right: option.yAxis[1].axisLabel.formatter(0.5),
+                left: option.yAxis[0].axisLabel.formatter(50000),
+              };
+            }"""
+        )
+        assert tile == {"yAxes": 2, "right": "50%", "left": "$50K"}, tile
+    finally:
+        _stop_server(server, thread, page)

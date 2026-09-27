@@ -610,6 +610,8 @@ def _write_chart(existing: CommentedMap, slim: dict[str, Any]) -> None:
     for key, value in slim.items():
         if key == "references" and isinstance(node.get(key), CommentedSeq):
             _write_references(node[key], value)
+        elif key in ("series", "axes") and isinstance(node.get(key), CommentedMap):
+            _merge_mapping(node[key], value)
         elif key not in node:
             _put_key(node, key, _flow(value))
         elif not _same_chart_value(key, node[key], value):
@@ -722,6 +724,21 @@ def _rearrange(seq: CommentedSeq, wanted: list[Any]) -> None:
     for index, node in enumerate(seq):
         if id(node) in carried:
             seq.ca.items[index] = carried[id(node)]
+
+
+def _merge_mapping(node: CommentedMap, value: dict[str, Any]) -> None:
+    """Edit a nested chart mapping (`series:`, `axes:`) key by key, so changing
+    one series' axis rewrites that one value and leaves the author's layout,
+    comments included."""
+    for key, item in value.items():
+        if isinstance(item, dict) and isinstance(node.get(key), CommentedMap):
+            _merge_mapping(node[key], item)
+        elif key not in node:
+            _put_key(node, key, _flow(item))
+        elif node[key] != item:
+            _replace_value(node, key, _flow(item))
+    for key in [k for k in node if k not in value]:
+        _delete_key(node, key)
 
 
 def _slim_metric(metric: dict[str, Any]) -> dict[str, Any]:

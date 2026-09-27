@@ -2860,3 +2860,78 @@ def test_editing_a_tile_that_merges_another_leaves_its_references_alone(tmp_path
     text, refs = _save_refs(tmp_path, "b", [{"y": 20, "label": "Goal"}])
     assert refs == {"a": [{"y": 10, "label": "Goal"}], "b": [{"y": 20, "label": "Goal"}]}, text
     assert text.startswith(TILE_MERGE_REFERENCES.split("  - <<: *base")[0]), text
+
+
+COMBO_DOC = (
+    "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+    'queries: {q: "SELECT 1 AS w, 2 AS revenue, 0.5 AS rate"}\n'
+    "tiles:\n"
+    "  - title: A\n"
+    "    query: q\n"
+    "    chart:\n"
+    "      type: bar\n"
+    "      y: [revenue, rate]\n"
+    "      series:\n"
+    "        # the rate reads against its own axis\n"
+    "        rate:\n"
+    "          type: line\n"
+    "          axis: right\n"
+    "      axes:\n"
+    "        right: {title: Rate, min: 0}\n"
+)
+
+
+def _save_combo(tmp_path, chart):
+    store = DashboardStore(tmp_path)
+    _, _, etag = store.load("d")
+    store.upsert_tile(
+        "d", {"id": "a", "title": "A", "query": "q", "chart": chart}, sql=None, if_match=etag
+    )
+    return (tmp_path / "d.yaml").read_text()
+
+
+def test_changing_one_series_mark_rewrites_only_that_value(tmp_path):
+    (tmp_path / "d.yaml").write_text(COMBO_DOC)
+    text = _save_combo(
+        tmp_path,
+        {
+            "type": "bar",
+            "y": ["revenue", "rate"],
+            "series": {"rate": {"type": "area", "axis": "right"}},
+            "axes": {"right": {"title": "Rate", "min": 0}},
+        },
+    )
+    assert text == COMBO_DOC.replace("          type: line\n", "          type: area\n"), text
+
+
+def test_moving_a_series_back_to_the_left_drops_its_axis_key_only(tmp_path):
+    (tmp_path / "d.yaml").write_text(COMBO_DOC)
+    text = _save_combo(
+        tmp_path,
+        {
+            "type": "bar",
+            "y": ["revenue", "rate"],
+            "series": {"rate": {"type": "line"}},
+            "axes": {"left": {"title": "Revenue"}},
+        },
+    )
+    expected = COMBO_DOC.replace("          axis: right\n", "").replace(
+        "        right: {title: Rate, min: 0}\n", "        left: {title: Revenue}\n"
+    )
+    assert text == expected, text
+    dashboard, _, _ = DashboardStore(tmp_path).load("d")
+    assert dashboard.tiles[0].chart.series["rate"].axis is None
+
+
+def test_a_combo_on_a_short_chart_writes_as_flow(tmp_path):
+    (tmp_path / "d.yaml").write_text(
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        'queries: {q: "SELECT 1 AS a, 2 AS b"}\n'
+        "tiles:\n"
+        "  - {title: A, query: q, chart: {type: line, y: [a, b]}}\n"
+    )
+    text = _save_combo(
+        tmp_path,
+        {"type": "line", "y": ["a", "b"], "series": {"b": {"type": "bar", "axis": "right"}}},
+    )
+    assert "chart: {type: line, y: [a, b], series: {b: {type: bar, axis: right}}}" in text, text

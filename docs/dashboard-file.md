@@ -214,6 +214,51 @@ pair, and an entry with no position or more than one. The chart builder has the 
 controls under References, and switching to a chart type without axes sets the
 references aside until you switch back.
 
+## Combo charts and a second axis
+
+A `line`, `bar` or `area` chart with several `y` columns can draw each one its own
+way. `series:` is keyed by the y column, and `axes:` titles and bounds the two value
+axes:
+
+```yaml
+chart:
+  type: bar
+  x: week
+  y: [revenue, conversion_rate]
+  format: {revenue: currency, conversion_rate: percent}
+  series:
+    conversion_rate: {type: line, axis: right, label: Conversion}
+  axes:
+    left: {title: Revenue}
+    right: {title: Conversion, min: 0, max: 1}
+```
+
+| Key | Values | Default |
+|---|---|---|
+| `series.<column>.type` | `line`, `bar`, `area` | the chart's `type` |
+| `series.<column>.axis` | `left`, `right` | `left` |
+| `series.<column>.label` | the legend name | the column name |
+| `axes.<left or right>.title` | text above that axis | none |
+| `axes.<left or right>.min`, `.max` | fixed bounds | fitted to the data |
+| `axes.<left or right>.format` | any format name or currency code | the format of the first series on that axis |
+
+Everything is on one axis until a series says `axis: right`, so a plain chart never
+grows a second scale by accident. Each axis labels its ticks in its own units, and
+the tooltip formats every series with its own `format`, so revenue reads as dollars
+and a rate as a percent in the same hover. The right axis draws no gridlines of its
+own, which keeps one grid on the chart. Colors and legend order follow the order of
+`y`, the same as without `series:`, and missing values stay gaps. `stacked: true`
+stacks the bars on each axis separately and leaves lines alone. `axes:` works without
+`series:` too, so `axes: {left: {title: Share, min: 0, max: 1}}` titles and bounds a
+single-axis chart.
+
+`sqldash lint` explains the combinations it cannot draw: `series` or `axes` on
+`scatter`, `pie`, `big_number` or `table`; with `group_by` (which names series by value,
+not by column); on a horizontal bar; on a metric tile with `compare`; a series key
+that is not in `y`; every column on the right axis; and `axes.right` with nothing on
+it. The chart builder shows a Series section once two or more y columns are picked,
+with the mark, axis, format and legend name per column and the axis titles.
+
 ## Relative dates
 
 `-30d` is the same as `last_30_days`. `mtd` and `ytd` are accepted everywhere a date

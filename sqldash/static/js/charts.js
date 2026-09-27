@@ -345,9 +345,21 @@ function firstColOfTypes(result, typeSet, exclude = []) {
 }
 
 const TYPE_FIELDS = {
-  line: ["x", "y", "group_by", "legend", "format", "references"],
-  bar: ["x", "y", "group_by", "stacked", "orientation", "color_by", "legend", "format", "references"],
-  area: ["x", "y", "group_by", "stacked", "legend", "format", "references"],
+  line: ["x", "y", "group_by", "legend", "format", "references", "series", "axes"],
+  bar: [
+    "x",
+    "y",
+    "group_by",
+    "stacked",
+    "orientation",
+    "color_by",
+    "legend",
+    "format",
+    "references",
+    "series",
+    "axes",
+  ],
+  area: ["x", "y", "group_by", "stacked", "legend", "format", "references", "series", "axes"],
   scatter: ["x", "y", "group_by", "legend", "format", "references"],
   pie: ["label", "value", "legend", "format"],
   heatmap: [
@@ -543,6 +555,7 @@ function xyOption(spec, result, forcedColor, height = 0, width = 0) {
     const xi = colIndex(result, spec.x);
     series = spec.y.map((yName) => ({
       name: humanize(yName),
+      column: yName,
       data: result.rows.map((row) => [row[xi], chartNumber(row[colIndex(result, yName)])]),
     }));
   }
@@ -567,16 +580,24 @@ function xyOption(spec, result, forcedColor, height = 0, width = 0) {
     };
   }
 
+  const combo = comboLayout(spec, series, horizontal);
   const colors = forcedColor && series.length === 1 ? [forcedColor] : palette();
   option.color = colors;
   option.series = series.map((s, i) => {
     const seriesColor = colors[i % colors.length];
+    const markType = combo ? combo.types[i] : spec.type;
     const common = { name: s.name, data: s.data, emphasis: { focus: series.length > 1 ? "series" : "none" } };
-    if (spec.type === "bar") {
+    if (combo) {
+      common.name = combo.names[i];
+      common.yAxisIndex = combo.axes[i];
+      const format = seriesFormat(spec, s.column);
+      common.tooltip = { valueFormatter: (v) => formatValue(v, format) };
+    }
+    if (markType === "bar") {
       return {
         ...common,
         type: "bar",
-        stack: spec.stacked ? "total" : undefined,
+        stack: spec.stacked ? (combo ? `bar-${combo.axes[i]}` : "total") : undefined,
         barMaxWidth: 24,
         encode: horizontal ? { x: 1, y: 0 } : undefined,
         itemStyle: {
@@ -586,7 +607,7 @@ function xyOption(spec, result, forcedColor, height = 0, width = 0) {
         },
       };
     }
-    if (spec.type === "scatter") {
+    if (markType === "scatter") {
       return {
         ...common,
         type: "scatter",
@@ -597,14 +618,18 @@ function xyOption(spec, result, forcedColor, height = 0, width = 0) {
     return {
       ...common,
       type: "line",
-      stack: spec.type === "area" && stacked && series.length > 1 ? "total" : undefined,
+      stack: combo
+        ? combo.areaStack[i]
+        : spec.type === "area" && stacked && series.length > 1
+          ? "total"
+          : undefined,
       lineStyle: { width: 2, cap: "round", join: "round" },
       symbol: "circle",
       symbolSize: 8,
       showSymbol: showSymbols,
       itemStyle: { borderColor: surface, borderWidth: 2 },
       areaStyle:
-        spec.type === "area" ? { opacity: 1, color: areaGradient(seriesColor) } : undefined,
+        markType === "area" ? { opacity: 1, color: areaGradient(seriesColor) } : undefined,
     };
   });
 
@@ -638,6 +663,7 @@ function xyOption(spec, result, forcedColor, height = 0, width = 0) {
 
   option.legend.show = spec.legend !== false && option.series.length >= 2;
   if (option.legend.show) option.grid.top = 32;
+  if (combo) applyComboAxes(option, spec, combo, compact, width);
   if (spec.type === "bar" && !isTemporal && !horizontal) {
     option.xAxis.axisLabel.interval = "auto";
   }
@@ -999,6 +1025,124 @@ function addReferences(option, spec, result, { horizontal, isTemporal, yFormat, 
         : undefined,
     });
   }
+}
+
+export function cleanCombo(spec) {
+  const out = {};
+  const ys = new Set(spec.y ?? []);
+  const blocked = Boolean(spec.group_by) || spec.orientation === "horizontal";
+  if (!["line", "bar", "area"].includes(spec.type) || blocked) return out;
+  const series = {};
+  for (const [column, entry] of Object.entries(spec.series ?? {})) {
+    if (!entry || (ys.size && !ys.has(column))) continue;
+    const next = {};
+    if (entry.type && entry.type !== spec.type) next.type = entry.type;
+    if (entry.axis === "right") next.axis = "right";
+    if (entry.label) next.label = entry.label;
+    if (Object.keys(next).length) series[column] = next;
+  }
+  if (Object.keys(series).length) out.series = series;
+  const onRight = Object.values(series).some((entry) => entry.axis === "right");
+  const axes = {};
+  for (const side of ["left", "right"]) {
+    if (side === "right" && !onRight) continue;
+    const entry = spec.axes?.[side];
+    if (!entry) continue;
+    const next = {};
+    if (entry.title) next.title = entry.title;
+    for (const key of ["min", "max"]) {
+      if (entry[key] !== null && entry[key] !== undefined && entry[key] !== "") {
+        const n = Number(entry[key]);
+        if (Number.isFinite(n)) next[key] = n;
+      }
+    }
+    if (entry.format) next.format = entry.format;
+    if (Object.keys(next).length) axes[side] = next;
+  }
+  if (Object.keys(axes).length) out.axes = axes;
+  return out;
+}
+
+/* Per-series marks and a right axis only apply where each series is one y
+   column: group_by (and compare, which rides on it) names series by value,
+   and a horizontal bar has no second value axis to put them on. */
+function comboLayout(spec, series, horizontal) {
+  const overrides = spec.series ?? {};
+  const axesSet = Object.keys(spec.axes ?? {}).length > 0;
+  if ((!Object.keys(overrides).length && !axesSet) || spec.group_by || horizontal) return null;
+  if (!["line", "bar", "area"].includes(spec.type)) return null;
+  const types = series.map((s) => overrides[s.column]?.type || spec.type);
+  const axes = series.map((s) => (overrides[s.column]?.axis === "right" ? 1 : 0));
+  const names = series.map((s) => overrides[s.column]?.label || s.name);
+  const stackArea = spec.stacked || spec.type === "area";
+  const areaStack = types.map((type, i) => {
+    if (type !== "area" || !stackArea) return undefined;
+    const peers = types.filter((t, j) => t === "area" && axes[j] === axes[i]).length;
+    return peers > 1 ? `area-${axes[i]}` : undefined;
+  });
+  const columns = series.map((s) => s.column);
+  return { types, axes, names, areaStack, columns, hasRight: axes.includes(1) };
+}
+
+function axisFormat(spec, combo, index) {
+  const side = index === 1 ? "right" : "left";
+  const authored = spec.axes?.[side]?.format;
+  if (authored) return authored;
+  const first = combo.columns.find((_, i) => combo.axes[i] === index);
+  return seriesFormat(spec, first ?? spec.y[0]);
+}
+
+function axisTitle(text, width, shared) {
+  if (!(width > 0)) return text;
+  const plot = shared ? (width - 110) / 2 - 10 : width - 60;
+  const room = Math.max(4, Math.floor(plot / 6.5));
+  return text.length > room ? `${text.slice(0, room - 1).trimEnd()}…` : text;
+}
+
+function applyComboAxes(option, spec, combo, compact, width = 0) {
+  const muted = cssVar("--ink-muted");
+  const base = option.yAxis;
+  const axis = (index) => {
+    const side = index === 1 ? "right" : "left";
+    const authored = spec.axes?.[side] ?? {};
+    const format = axisFormat(spec, combo, index);
+    const next = {
+      ...base,
+      position: side,
+      axisLabel: {
+        ...base.axisLabel,
+        formatter: (v) => formatValue(v, format === "number" ? "compact" : format, true),
+      },
+    };
+    if (index === 1) {
+      next.splitLine = { show: false };
+    }
+    if (authored.min != null) next.min = authored.min;
+    if (authored.max != null) next.max = authored.max;
+    if (authored.title && !compact) {
+      next.name = axisTitle(authored.title, width, combo.hasRight);
+      next.nameLocation = "end";
+      next.nameGap = 12;
+      next.nameTextStyle = {
+        color: muted,
+        fontSize: 11,
+        fontWeight: 500,
+        align: side,
+        padding: 0,
+      };
+    }
+    return next;
+  };
+  option.yAxis = combo.hasRight ? [axis(0), axis(1)] : axis(0);
+  if (option.legend.show) {
+    option.legend.type = "scroll";
+    option.legend.pageIconColor = cssVar("--ink-2");
+    option.legend.pageIconInactiveColor = cssVar("--grid-line");
+    option.legend.pageIconSize = 9;
+    option.legend.pageTextStyle = { color: muted, fontSize: 11 };
+  }
+  const titled = ["left", "right"].some((side) => spec.axes?.[side]?.title);
+  if (titled && !compact) option.grid.top += 18;
 }
 
 export function pieTooltip(fmt) {

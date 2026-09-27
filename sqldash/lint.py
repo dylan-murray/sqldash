@@ -27,7 +27,12 @@ from sqldash.connectors.engine import paramstyle_for
 from sqldash.connectors.engine_urls import DRIVERS, INSTALL_EXTRAS
 from sqldash.execution import ExecutionRegistry
 from sqldash.models.agents import ToolParam
-from sqldash.models.chart import HEATMAP_FIELDS, HISTOGRAM_FIELDS, REFERENCE_CHART_TYPES
+from sqldash.models.chart import (
+    COMBO_CHART_TYPES,
+    HEATMAP_FIELDS,
+    HISTOGRAM_FIELDS,
+    REFERENCE_CHART_TYPES,
+)
 from sqldash.models.dashboard import split_page_tokens
 from sqldash.models.source import is_secret_bag_key
 from sqldash.params import (
@@ -811,6 +816,54 @@ def _note_metric_use(usage: _TileUsage, dashboard, project_metrics: dict, name: 
     return definition, declared
 
 
+def _combo_errors(tile) -> list[str]:
+    """Per-series marks and a second value axis need one series per y column
+    on a vertical line, bar or area chart, and a right axis that something
+    reads against."""
+    chart = tile.chart
+    if chart is None or not (chart.series or chart.axes):
+        return []
+    label = f"tile '{tile.id}'"
+    keys = " and ".join(k for k in ("series", "axes") if getattr(chart, k))
+    if chart.type not in COMBO_CHART_TYPES:
+        return [f"{label}: {keys} apply to line, bar and area charts, not {chart.type}"]
+    errors: list[str] = []
+    if chart.group_by:
+        errors.append(
+            f"{label}: {keys} cannot combine with group_by, which splits one y column into "
+            "a series per value. Drop group_by, or list the columns in y instead"
+        )
+    if chart.orientation == "horizontal":
+        errors.append(f"{label}: {keys} need a vertical chart. Remove orientation: horizontal")
+    if tile.metric is not None and tile.metric.compare:
+        errors.append(
+            f"{label}: {keys} cannot combine with compare, which draws the prior window "
+            "as its own series. Remove one of them"
+        )
+    if chart.y:
+        extra = [name for name in chart.series if name not in chart.y]
+        if extra:
+            errors.append(
+                f"{label}: series {', '.join(repr(n) for n in extra)} "
+                f"{'is' if len(extra) == 1 else 'are'} not in the chart's y "
+                f"({', '.join(chart.y)}). Add {'it' if len(extra) == 1 else 'them'} to y "
+                "or rename the series key"
+            )
+        right = [n for n in chart.y if (s := chart.series.get(n)) and s.axis == "right"]
+        if right and len(right) == len(chart.y):
+            errors.append(
+                f"{label}: every y column is on the right axis, which leaves the left one "
+                "empty. Keep at least one series on the left"
+            )
+    on_right = any(s.axis == "right" for s in chart.series.values())
+    if "right" in chart.axes and not on_right:
+        errors.append(
+            f"{label}: axes.right is set but no series reads against it. Add axis: right to "
+            "a series, or remove axes.right"
+        )
+    return errors
+
+
 def _lint_tiles(
     dashboard, file: str, available: dict, project_metrics: dict
 ) -> tuple[list[Finding], _TileUsage]:
@@ -884,6 +937,7 @@ def _lint_tiles(
                             f"so it takes no {key}",
                         )
                     )
+        findings.extend(Finding(file, "error", m) for m in _combo_errors(tile))
         if tile.query:
             usage.queries.add(tile.query)
         if tile.metric is None:
@@ -1925,9 +1979,9 @@ def _chart_column_warnings(dashboard, columns: dict[str, set[str]]) -> list[str]
         known = columns.get(tile.id)
         if tile.chart is None or known is None:
             continue
-        for key in CHART_COLUMN_KEYS:
+        for key in (*CHART_COLUMN_KEYS, "series"):
             value = getattr(tile.chart, key)
-            names = value if isinstance(value, list) else [value]
+            names = list(value) if isinstance(value, list | dict) else [value]
             for name in names:
                 if name and name not in known:
                     warnings.append(
