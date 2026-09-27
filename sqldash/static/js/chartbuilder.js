@@ -1,8 +1,10 @@
 import {
+  cleanReference,
   inferSpec,
   markEmptyChart,
   markTruncated,
   pruneSpecForType,
+  referenceKind,
   renderBigNumber,
   RESULT_PAGE,
   renderTable,
@@ -21,6 +23,42 @@ const NUMERIC = new Set(["integer", "float", "decimal"]);
 // column name the file did not ask for, and it goes stale the moment the
 // query's aliases change (#357).
 const ENCODING_KEYS = ["x", "y", "group_by", "label", "value"];
+const XY_TYPES = ["line", "bar", "area", "scatter"];
+const REFERENCE_KINDS = [
+  ["line", "Line at a value"],
+  ["band", "Band between values"],
+  ["marker", "Marker on the x axis"],
+  ["span", "Span on the x axis"],
+  ["metric", "Metric value"],
+];
+const REFERENCE_COLORS = [
+  ["ink", "Ink"],
+  ["muted", "Muted"],
+  ["accent", "Accent"],
+  ["good", "Good"],
+  ["bad", "Bad"],
+  ...[1, 2, 3, 4, 5, 6, 7, 8].map((n) => [`series-${n}`, `Series ${n}`]),
+];
+const REFERENCE_COLOR_TOKENS = {
+  ink: "--ink-2",
+  muted: "--ink-muted",
+  accent: "--accent",
+  good: "--good-text",
+  bad: "--danger",
+};
+const REFERENCE_STYLES = [
+  ["dashed", "Dashed"],
+  ["solid", "Solid"],
+  ["dotted", "Dotted"],
+];
+
+function blankReference(kind) {
+  if (kind === "band") return { y: ["", ""] };
+  if (kind === "marker") return { x: "" };
+  if (kind === "span") return { x: ["", ""] };
+  if (kind === "metric") return { metric: "" };
+  return { y: "" };
+}
 
 function isSet(value) {
   return value != null && !(Array.isArray(value) && !value.length);
@@ -35,11 +73,13 @@ function checkbox(checked, key) {
 }
 
 export class ChartBuilder {
-  constructor({ typeEl, encodingEl, previewEl, onChange }) {
+  constructor({ typeEl, encodingEl, previewEl, onChange, metricNames }) {
     this.typeEl = typeEl;
     this.encodingEl = encodingEl;
     this.previewEl = previewEl;
     this.onChange = onChange ?? (() => {});
+    this.metricNames = metricNames ?? (() => []);
+    this._parkedReferences = null;
     this.result = null;
     this._spec = { type: "table", format: {} };
     this._chart = null;
@@ -52,19 +92,34 @@ export class ChartBuilder {
     for (const key of ENCODING_KEYS) {
       if (!this._authored.has(key)) delete spec[key];
     }
+    if (spec.references) {
+      const references = spec.references.map(cleanReference).filter(Boolean);
+      if (references.length) spec.references = references;
+      else delete spec.references;
+    }
     return spec;
   }
 
   setSpec(spec) {
+    this._parkedReferences = null;
     this._spec = { format: {}, ...(spec ?? { type: "table" }) };
+    if (Array.isArray(this._spec.references)) {
+      this._spec.references = this._spec.references.map((ref) => cleanReference(ref) ?? ref);
+    }
     this._authored = new Set(ENCODING_KEYS.filter((key) => isSet(this._spec[key])));
     this.renderAll();
   }
 
   setResult(result, { infer = true } = {}) {
     this.result = result;
-    if (infer && result) this._spec = { ...inferSpec(this.spec, result) };
+    if (infer && result) this.inferFrom(result);
     this.renderAll();
+  }
+
+  inferFrom(result) {
+    const references = this._spec.references;
+    this._spec = { ...inferSpec(this.spec, result) };
+    if (references) this._spec.references = references;
   }
 
   renderAll() {
@@ -81,8 +136,17 @@ export class ChartBuilder {
       btn.className = "seg-btn" + (this._spec.type === type ? " active" : "");
       btn.textContent = TYPE_LABELS[type];
       btn.addEventListener("click", () => {
+        const refs = this._spec.references?.length ? this._spec.references : null;
         this._spec = pruneSpecForType(this._spec, type);
-        if (this.result) this._spec = { ...inferSpec(this.spec, this.result) };
+        if (XY_TYPES.includes(type)) {
+          if (!this._spec.references && this._parkedReferences) {
+            this._spec.references = this._parkedReferences;
+          }
+          this._parkedReferences = null;
+        } else if (refs) {
+          this._parkedReferences = refs;
+        }
+        if (this.result) this.inferFrom(this.result);
         this.renderAll();
         this.onChange();
       });
@@ -140,6 +204,7 @@ export class ChartBuilder {
       if (type === "bar") {
         fields.push(["Horizontal", checkbox(spec.orientation === "horizontal", "orientation")]);
       }
+      fields.push(["References", this.referencesControl()]);
     } else if (type === "pie") {
       fields.push(["Label", this.columnSelect("label", spec.label)]);
       fields.push(["Value", this.columnSelect("value", spec.value)]);
@@ -147,10 +212,18 @@ export class ChartBuilder {
       fields.push(["Value", this.columnSelect("value", spec.value)]);
     }
 
+    if (!XY_TYPES.includes(type) && this._parkedReferences?.length) {
+      const hint = document.createElement("span");
+      hint.className = "hint ref-parked";
+      const n = this._parkedReferences.length;
+      hint.textContent = `${n} reference${n === 1 ? "" : "s"} set aside: references draw on line, bar, area and scatter charts, and come back if you switch to one`;
+      fields.push(["References", hint]);
+    }
+
     this.encodingEl.replaceChildren(
       ...fields.map(([text, ...controls]) => {
         const field = document.createElement("div");
-        field.className = "field field-inline";
+        field.className = text === "References" ? "field field-refs" : "field field-inline";
         const label = document.createElement("label");
         label.textContent = text;
         field.append(label, ...controls);
@@ -182,6 +255,139 @@ export class ChartBuilder {
     enhanceSelects(this.encodingEl);
   }
 
+  xValues() {
+    const columns = this.result?.columns ?? [];
+    const xi = columns.findIndex((c) => c.name === this._spec.x);
+    if (xi < 0) return [];
+    return [...new Set(this.result.rows.map((row) => row[xi]).filter((v) => v != null).map(String))].slice(0, 200);
+  }
+
+  referencesChanged({ rerender = false } = {}) {
+    if (rerender) this.renderEncodings();
+    this.renderPreview();
+    this.onChange();
+  }
+
+  referencesControl() {
+    const wrap = document.createElement("div");
+    wrap.className = "ref-list";
+    const refs = this._spec.references ?? [];
+    const listId = `ref-x-values-${Math.random().toString(36).slice(2, 8)}`;
+    const datalist = document.createElement("datalist");
+    datalist.id = listId;
+    for (const value of this.xValues()) datalist.appendChild(new Option(value));
+    wrap.appendChild(datalist);
+
+    refs.forEach((ref, index) => {
+      const kind = referenceKind(ref);
+      const row = document.createElement("div");
+      row.className = "ref-row";
+      const token = REFERENCE_COLOR_TOKENS[ref.color ?? "ink"] ?? `--${ref.color}`;
+      row.style.setProperty("--ref-color", `var(${token})`);
+      const update = (patch, opts) => {
+        const next = { ...this._spec.references[index], ...patch };
+        for (const [key, value] of Object.entries(patch)) if (value === null) delete next[key];
+        this._spec.references[index] = next;
+        this.referencesChanged(opts);
+      };
+      const select = (options, value, onPick, label) => {
+        const el = document.createElement("select");
+        el.setAttribute("aria-label", label);
+        for (const [v, text] of options) el.appendChild(new Option(text, v, v === value, v === value));
+        el.addEventListener("change", () => onPick(el.value));
+        return el;
+      };
+      const input = (value, { type = "text", placeholder, label, list, onInput }) => {
+        const el = document.createElement("input");
+        el.type = type;
+        if (type === "number") el.step = "any";
+        el.value = value ?? "";
+        el.placeholder = placeholder;
+        el.setAttribute("aria-label", label);
+        if (list) el.setAttribute("list", list);
+        el.addEventListener("input", () => onInput(el.value));
+        return el;
+      };
+
+      const head = document.createElement("div");
+      head.className = "ref-head";
+      head.append(
+        select(REFERENCE_KINDS, kind, (next) => {
+          const { label, color, style, format } = this._spec.references[index];
+          this._spec.references[index] = { ...blankReference(next), label, color, style, format };
+          this.referencesChanged({ rerender: true });
+        }, "Reference kind"),
+        select(REFERENCE_COLORS, ref.color ?? "ink", (next) => {
+          update({ color: next === "ink" ? null : next });
+          row.style.setProperty("--ref-color", `var(${REFERENCE_COLOR_TOKENS[next] ?? `--${next}`})`);
+        }, "Reference color"),
+        select(REFERENCE_STYLES, ref.style ?? "dashed", (next) => update({ style: next === "dashed" ? null : next }), "Line style")
+      );
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "btn btn-ghost ref-remove";
+      remove.setAttribute("aria-label", "Remove reference");
+      remove.title = "Remove reference";
+      remove.textContent = "×";
+      remove.addEventListener("click", () => {
+        this._spec.references.splice(index, 1);
+        if (!this._spec.references.length) delete this._spec.references;
+        this.referencesChanged({ rerender: true });
+      });
+      head.appendChild(remove);
+
+      const body = document.createElement("div");
+      body.className = "ref-body";
+      if (kind === "line") {
+        body.appendChild(input(ref.y, { type: "number", placeholder: "Value", label: "Reference value", onInput: (v) => update({ y: v }) }));
+      } else if (kind === "band") {
+        const pair = ref.y ?? ["", ""];
+        body.append(
+          input(pair[0], { type: "number", placeholder: "From", label: "Band from", onInput: (v) => update({ y: [v, this._spec.references[index].y?.[1] ?? ""] }) }),
+          input(pair[1], { type: "number", placeholder: "To", label: "Band to", onInput: (v) => update({ y: [this._spec.references[index].y?.[0] ?? "", v] }) })
+        );
+      } else if (kind === "marker") {
+        body.appendChild(input(ref.x, { placeholder: "Date or category", label: "Marker position", list: listId, onInput: (v) => update({ x: v }) }));
+      } else if (kind === "span") {
+        const pair = ref.x ?? ["", ""];
+        body.append(
+          input(pair[0], { placeholder: "From", label: "Span from", list: listId, onInput: (v) => update({ x: [v, this._spec.references[index].x?.[1] ?? ""] }) }),
+          input(pair[1], { placeholder: "To", label: "Span to", list: listId, onInput: (v) => update({ x: [this._spec.references[index].x?.[0] ?? "", v] }) })
+        );
+      } else {
+        const names = this.metricNames();
+        if (names.length) {
+          const options = [["", "Choose a metric…"], ...names.map((n) => [n, n])];
+          if (ref.metric && !names.includes(ref.metric)) options.push([ref.metric, ref.metric]);
+          body.appendChild(select(options, ref.metric ?? "", (v) => update({ metric: v }), "Reference metric"));
+        } else {
+          body.appendChild(input(ref.metric, { placeholder: "Metric name", label: "Reference metric", onInput: (v) => update({ metric: v }) }));
+        }
+      }
+      body.appendChild(input(ref.label, { placeholder: "Label", label: "Reference label", onInput: (v) => update({ label: v || null }) }));
+      row.append(head, body);
+      if (kind === "metric") {
+        const note = document.createElement("span");
+        note.className = "hint";
+        note.textContent = "Runs with the dashboard's filters, so it shows on the dashboard rather than in this preview";
+        row.appendChild(note);
+      }
+      wrap.appendChild(row);
+    });
+
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "btn btn-ghost ref-add";
+    add.textContent = "+ Add reference";
+    add.addEventListener("click", () => {
+      this._spec.references = [...(this._spec.references ?? []), blankReference("line")];
+      this.referencesChanged({ rerender: true });
+      this.encodingEl.querySelector(".ref-row:last-of-type input")?.focus();
+    });
+    wrap.appendChild(add);
+    return wrap;
+  }
+
   renderPreview() {
     const preview = this.previewEl;
     this._chart?.dispose();
@@ -202,7 +408,13 @@ export class ChartBuilder {
     mount.className = "chart-mount";
     preview.appendChild(mount);
     this._chart = echarts.init(mount);
-    const option = translate(spec, this.result, undefined, this._chart.getDom().clientHeight);
+    const option = translate(
+      spec,
+      this.result,
+      undefined,
+      this._chart.getDom().clientHeight,
+      this._chart.getDom().clientWidth
+    );
     this._chart.setOption(option, { notMerge: true });
     markEmptyChart(preview, option);
     new ResizeObserver(() => this._chart?.resize()).observe(mount);

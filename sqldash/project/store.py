@@ -22,7 +22,7 @@ from ruamel.yaml.error import CommentMark
 from ruamel.yaml.scalarstring import FoldedScalarString, LiteralScalarString
 from ruamel.yaml.tokens import CommentToken
 
-from sqldash.models.chart import ChartSpec
+from sqldash.models.chart import ChartSpec, ReferenceLine
 from sqldash.models.dashboard import (
     TILE_LEVEL_DIMENSIONS_HINT,
     Dashboard,
@@ -498,12 +498,39 @@ def _write_chart(existing: CommentedMap, slim: dict[str, Any]) -> None:
         _put_key(existing, "chart", _flow(slim))
         return
     for key, value in slim.items():
-        if not _same_chart_value(key, node.get(key), value):
+        if key == "references" and isinstance(node.get(key), CommentedSeq):
+            _write_references(node[key], value)
+        elif not _same_chart_value(key, node.get(key), value):
             node[key] = _flow(value)
     for key in list(node.keys()):
         field = ChartSpec.model_fields.get(key)
         if key not in slim and field is not None and node[key] != field.default:
             _delete_key(node, key)
+
+
+def _reference(raw: Any) -> ReferenceLine | None:
+    try:
+        return ReferenceLine.model_validate(dict(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def _write_references(seq: CommentedSeq, incoming: list[Any]) -> None:
+    """Edit an authored `references:` list item by item: a reference that still
+    means the same thing keeps its node (and its style, a `2026-09-01` date
+    staying unquoted), a removed one goes, and a new or changed one is written
+    as a flow mapping in its place."""
+    existing = [(_reference(item), item) for item in seq]
+    kept: list[Any] = []
+    for value in incoming:
+        wanted = _reference(value)
+        match = next(
+            (i for i, (ref, _) in enumerate(existing) if ref is not None and ref == wanted),
+            None,
+        )
+        kept.append(existing.pop(match)[1] if match is not None else _flow(value))
+    if kept != list(seq) or len(kept) != len(seq):
+        seq[:] = kept
 
 
 def _slim_metric(metric: dict[str, Any]) -> dict[str, Any]:

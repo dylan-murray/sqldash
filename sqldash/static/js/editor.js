@@ -281,6 +281,7 @@ const builder = new ChartBuilder({
   typeEl: document.getElementById("qb-type"),
   encodingEl: document.getElementById("qb-encoding"),
   previewEl: document.getElementById("qb-preview"),
+  metricNames: () => metricsCatalog.map((m) => m.name),
 });
 builder.renderAll();
 

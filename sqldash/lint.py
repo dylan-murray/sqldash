@@ -27,6 +27,7 @@ from sqldash.connectors.engine import paramstyle_for
 from sqldash.connectors.engine_urls import DRIVERS, INSTALL_EXTRAS
 from sqldash.execution import ExecutionRegistry
 from sqldash.models.agents import ToolParam
+from sqldash.models.chart import REFERENCE_CHART_TYPES
 from sqldash.models.dashboard import split_page_tokens
 from sqldash.models.source import is_secret_bag_key
 from sqldash.params import (
@@ -750,6 +751,35 @@ def _lint_query_writes(dashboard, file: str) -> list[Finding]:
     return findings
 
 
+def _reference_findings(tile, file: str, available: dict) -> list[Finding]:
+    """References draw over an x/y plot, and a metric reference needs a metric
+    the dashboard can run."""
+    if tile.chart is None or not tile.chart.references:
+        return []
+    if tile.chart.type not in REFERENCE_CHART_TYPES:
+        return [
+            Finding(
+                file,
+                "error",
+                f"tile '{tile.id}': references draw on {', '.join(REFERENCE_CHART_TYPES)} "
+                f"charts, not {tile.chart.type}. Remove them or pick one of those types",
+            )
+        ]
+    findings: list[Finding] = []
+    for n, ref in enumerate(tile.chart.references, start=1):
+        if ref.metric is not None and ref.metric not in available:
+            options = ", ".join(sorted(available)) or "(none defined)"
+            findings.append(
+                Finding(
+                    file,
+                    "error",
+                    f"tile '{tile.id}': reference {n} names unknown metric '{ref.metric}'. "
+                    f"Available: {options}",
+                )
+            )
+    return findings
+
+
 def _lint_tiles(
     dashboard, file: str, available: dict, project_metrics: dict
 ) -> tuple[list[Finding], _TileUsage]:
@@ -778,6 +808,7 @@ def _lint_tiles(
                     f"not {tile.chart.type}",
                 )
             )
+        findings.extend(_reference_findings(tile, file, available))
         if tile.query:
             usage.queries.add(tile.query)
         if tile.metric is None:

@@ -1,5 +1,6 @@
 import { apiToken as readApiToken } from "/static/js/token.js";
 import {
+  chartNumber,
   cssVar,
   escapeHtml,
   inferSpec,
@@ -30,6 +31,7 @@ export const charts = new Map();
 export const tileResults = new Map();
 export const tilePrevResults = new Map();
 export const tileExecutions = new Map();
+export const tileReferenceValues = new Map();
 
 let etag = data.etag;
 export const getEtag = () => etag;
@@ -129,7 +131,15 @@ export function disposeTile(tileId) {
 // hardest if missed: left under the old id it is now *another* tile's id, and the
 // shared source-banner counts it against a tile that is fine.
 function tileStateMaps() {
-  return [charts, tileResults, tilePrevResults, tileExecutions, tileHueSlots, runErrors];
+  return [
+    charts,
+    tileResults,
+    tilePrevResults,
+    tileExecutions,
+    tileHueSlots,
+    runErrors,
+    tileReferenceValues,
+  ];
 }
 
 export function renameTile(oldId, newId) {
@@ -157,7 +167,7 @@ export function defaultChartSpec(tile) {
 
 export function renderTile(el, tile, result, previous = null) {
   const body = el.querySelector(".tile-body");
-  let spec = tile.chart ?? defaultChartSpec(tile);
+  let spec = withReferenceValues(tile.chart ?? defaultChartSpec(tile), tileReferenceValues.get(tile.id));
   tileResults.set(tile.id, result);
   setStatus(body, null);
   const csvBtn = el.querySelector('[data-action="csv"]');
@@ -209,7 +219,7 @@ export function renderTile(el, tile, result, previous = null) {
   }
   const slot = tileHueSlots.get(tile.id);
   const forced = slot && slot !== 1 ? cssVar(`--series-${slot}`) : undefined;
-  const option = styleCompareSeries(translate(spec, result, forced, mount.clientHeight));
+  const option = styleCompareSeries(translate(spec, result, forced, mount.clientHeight, mount.clientWidth));
   chart.setOption(option, { notMerge: true });
   markEmptyChart(body, option);
   attachCrossFilter(chart, spec, result);
@@ -219,6 +229,53 @@ export function renderTile(el, tile, result, previous = null) {
   markTruncated(body, result);
 }
 
+
+function withReferenceValues(spec, values) {
+  if (!spec.references?.some((ref) => ref?.metric)) return spec;
+  const references = spec.references.map((ref) =>
+    ref?.metric
+      ? {
+          ...ref,
+          y: values?.[ref.metric] ?? null,
+          format: ref.format || dashboard.metric_formats?.[ref.metric] || null,
+        }
+      : ref
+  );
+  return { ...spec, references };
+}
+
+/* A metric reference is a scalar run of that metric under the same filter
+   values as the tile, so a target moves with the dashboard's date range and
+   region the way a big number would. It shares `pending` with the tiles, so a
+   reference to a metric a big number already shows costs no second query. A
+   failed reference drops out of the chart instead of failing the tile. */
+function metricReferenceValues(tile, values, pending) {
+  const names = [...new Set((tile.chart?.references ?? []).filter((r) => r?.metric).map((r) => r.metric))];
+  if (!names.length) return Promise.resolve(null);
+  return Promise.all(
+    names.map((name) => {
+      const body = { metric: name, dimensions: [], grain: null, params: values };
+      const key = JSON.stringify(body);
+      if (!pending.has(key)) {
+        pending.set(
+          key,
+          submitRun(body).then(async (id) => ({ id, result: await pollExecution(id) }))
+        );
+      }
+      return pending.get(key).then(
+        ({ result }) => {
+          const col = result.columns.findIndex((c) => ["integer", "float", "decimal"].includes(c.type));
+          const value = col < 0 ? null : chartNumber(result.rows[0]?.[col] ?? null);
+          return [name, typeof value === "number" ? value : null];
+        },
+        (err) => {
+          console.warn(`reference metric '${name}' did not run: ${err.message}`);
+          return [name, null];
+        }
+      );
+    })
+  ).then(Object.fromEntries);
+}
 
 function daterangeBinds() {
   const filter = dashboard.filters.find((f) => f.type === "daterange");
@@ -462,9 +519,11 @@ export async function runTiles(tiles) {
     const settled = compareError
       ? Promise.reject(new Error(compareError))
       : currentThenPrevious(pending.get(key), comparePromise);
-    settled
-      .then(([{ id, result }, previous]) => {
+    const references = metricReferenceValues(tile, values, pending);
+    Promise.all([settled, references])
+      .then(([[{ id, result }, previous], referenceValues]) => {
         if (current()) {
+          tileReferenceValues.set(tile.id, referenceValues);
           tileExecutions.set(tile.id, id);
           clearRunError(tile.id);
           renderTile(el, tile, result, previous);
@@ -485,7 +544,9 @@ export async function runTiles(tiles) {
 
 function clearRenderedTile(el, tileId) {
   charts.get(tileId)?.dispose();
-  for (const map of [charts, tileResults, tilePrevResults, tileExecutions]) map.delete(tileId);
+  for (const map of [charts, tileResults, tilePrevResults, tileExecutions, tileReferenceValues]) {
+    map.delete(tileId);
+  }
   const csvBtn = el.querySelector('[data-action="csv"]');
   if (csvBtn) csvBtn.hidden = true;
   const body = el.querySelector(".tile-body");

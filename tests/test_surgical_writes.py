@@ -2442,3 +2442,90 @@ def test_a_new_tile_with_only_a_chart_type_writes_the_shorthand(store):
     )
     text = path.read_text()
     assert "    chart: bar\n" in text, text
+
+
+REFERENCES_DOC = (
+    "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+    "queries: {q: \"SELECT DATE '2026-09-01' AS d, 2 AS b\"}\n"
+    "tiles:\n"
+    "  - title: A\n"
+    "    query: q\n"
+    "    chart:\n"
+    "      type: bar\n"
+    "      references:\n"
+    "        # the quarterly goal\n"
+    "        - {y: 150000, label: Goal}\n"
+    "        - {x: 2026-09-01, label: Launch}\n"
+    "        - {y: [1, 2]}\n"
+)
+
+
+def _save_chart(tmp_path, chart):
+    store = DashboardStore(tmp_path)
+    _, _, etag = store.load("d")
+    store.upsert_tile(
+        "d", {"id": "a", "title": "A", "query": "q", "chart": chart}, sql=None, if_match=etag
+    )
+    return (tmp_path / "d.yaml").read_text()
+
+
+def test_changing_the_chart_type_keeps_the_authored_references_untouched(tmp_path):
+    (tmp_path / "d.yaml").write_text(REFERENCES_DOC)
+    text = _save_chart(
+        tmp_path,
+        {
+            "type": "line",
+            "references": [
+                {"y": 150000, "label": "Goal"},
+                {"x": "2026-09-01", "label": "Launch"},
+                {"y": [1, 2]},
+            ],
+        },
+    )
+    assert text == REFERENCES_DOC.replace("      type: bar\n", "      type: line\n"), text
+
+
+def test_removing_one_reference_deletes_only_its_line(tmp_path):
+    (tmp_path / "d.yaml").write_text(REFERENCES_DOC)
+    text = _save_chart(
+        tmp_path,
+        {"type": "bar", "references": [{"y": 150000, "label": "Goal"}, {"y": [1, 2]}]},
+    )
+    assert text == REFERENCES_DOC.replace("        - {x: 2026-09-01, label: Launch}\n", ""), text
+
+
+def test_adding_a_reference_appends_one_flow_mapping(tmp_path):
+    (tmp_path / "d.yaml").write_text(REFERENCES_DOC)
+    text = _save_chart(
+        tmp_path,
+        {
+            "type": "bar",
+            "references": [
+                {"y": 150000, "label": "Goal"},
+                {"x": "2026-09-01", "label": "Launch"},
+                {"y": [1, 2]},
+                {"metric": "revenue_target", "color": "good"},
+            ],
+        },
+    )
+    assert text == REFERENCES_DOC + "        - {metric: revenue_target, color: good}\n", text
+    dashboard, _, _ = DashboardStore(tmp_path).load("d")
+    assert [r.metric for r in dashboard.tiles[0].chart.references] == [
+        None,
+        None,
+        None,
+        "revenue_target",
+    ]
+
+
+def test_references_on_a_new_chart_mapping_write_as_flow(tmp_path):
+    (tmp_path / "d.yaml").write_text(
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        'queries: {q: "SELECT 1 AS a"}\n'
+        "tiles:\n"
+        "  - {title: A, query: q, chart: bar}\n"
+    )
+    text = _save_chart(tmp_path, {"type": "bar", "references": [{"y": 5, "label": "Target"}]})
+    dashboard, _, _ = DashboardStore(tmp_path).load("d")
+    assert dashboard.tiles[0].chart.references[0].y == 5
+    assert "references: [{y: 5, label: Target}]" in text, text

@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -2000,3 +2001,68 @@ def test_strict_lint_case_fold_hint_needs_the_dimension_unresolved(
     assert len(errors) == 1, errors
     assert errors[0].startswith("metric 'lc_trend': SQL fails against the source: ")
     assert ("time_dimension 'order_date_lc' has no expr" in errors[0]) is hinted
+
+
+def test_references_validate_their_shape():
+    from pydantic import ValidationError
+
+    from sqldash.models.chart import ChartSpec
+
+    spec = ChartSpec.model_validate(
+        {
+            "type": "line",
+            "references": [
+                {"y": 5000, "label": "Target"},
+                {"x": date(2026, 9, 1)},
+                {"y": [-2000, 2000]},
+                {"metric": "revenue"},
+            ],
+        }
+    )
+    assert spec.references[1].x == "2026-09-01"
+    assert spec.references[2].y == [-2000.0, 2000.0]
+    for bad, needle in [
+        ({"y": 1, "x": "a"}, "exactly one of"),
+        ({"label": "nothing"}, "exactly one of"),
+        ({"y": [1]}, "two values"),
+        ({"y": "lots"}, "valid number"),
+        ({"y": float("inf")}, "finite"),
+        ({"y": 1, "color": "red"}, "series-8"),
+        ({"y": 1, "style": "wavy"}, "dotted"),
+        ({"y": 1, "format": "furlongs"}, "is not valid"),
+        ({"y": 1, "axis": "right"}, "Extra inputs"),
+    ]:
+        with pytest.raises(ValidationError, match=needle):
+            ChartSpec.model_validate({"type": "line", "references": [bad]})
+
+
+def test_lint_rejects_references_on_charts_without_axes(tmp_path):
+    (tmp_path / "d.yaml").write_text(
+        "title: D\n"
+        "source: {type: duckdb, database: ':memory:'}\n"
+        "tiles:\n"
+        "  - {title: P, chart: {type: pie, references: [{y: 1}]}, sql: 'SELECT 1 AS n'}\n"
+        "  - {title: N, chart: {type: big_number, references: [{y: 1}]}, sql: 'SELECT 1 AS n'}\n"
+        "  - {title: L, chart: {type: line, references: [{y: 1}]}, sql: 'SELECT 1 AS n'}\n"
+    )
+    errors = [f.message for f in lint(tmp_path) if f.level == "error"]
+    assert any("tile 'p'" in m and "references draw on line, bar" in m for m in errors), errors
+    assert any("tile 'n'" in m and "not big_number" in m for m in errors), errors
+    assert not any("tile 'l'" in m for m in errors), errors
+
+
+def test_lint_rejects_a_reference_to_an_unknown_metric(tmp_path):
+    create_demo(tmp_path)
+    (tmp_path / ".sqldash" / "refs.yaml").write_text(
+        "title: R\n"
+        "source: {type: duckdb, attach_files: true}\n"
+        "tiles:\n"
+        "  - title: T\n"
+        "    sql: SELECT 1 AS a, 2 AS b\n"
+        "    chart:\n"
+        "      type: bar\n"
+        "      references: [{metric: revenue}, {metric: revnue}]\n"
+    )
+    errors = [f.message for f in lint(tmp_path) if f.level == "error"]
+    assert any("reference 2 names unknown metric 'revnue'" in m for m in errors), errors
+    assert not any("'revenue'" in m and "unknown" in m for m in errors), errors

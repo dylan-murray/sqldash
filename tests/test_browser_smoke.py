@@ -7189,3 +7189,122 @@ def test_non_finite_floats_json_and_binary_render_as_the_warehouse_returned_them
         assert tab.locator(".tile-status .err").count() == 0
     finally:
         _stop_server(server, thread, tab)
+
+
+_REFERENCES_DASHBOARD = """\
+title: R
+source: {type: duckdb, attach_files: true}
+filters:
+  - {name: dates, type: daterange, default: last_60_days}
+tiles:
+  - {title: Total, metric: revenue}
+  - title: By category
+    chart:
+      type: bar
+      format: currency
+      references:
+        - {metric: revenue, label: All revenue}
+        - {y: 900000000, label: Moonshot}
+        - {x: garden}
+    sql: |
+      SELECT category, SUM(amount) AS revenue FROM orders
+      WHERE order_date BETWEEN {{ dates_start }} AND {{ dates_end }} GROUP BY 1
+"""
+
+
+def _reference_state(page, tile_id):
+    return page.evaluate(
+        """(id) => {
+          const mount = document.querySelector(`.tile[data-tile-id="${id}"] .chart-mount`);
+          const option = echarts.getInstanceByDom(mount).getOption();
+          const lines = option.series.find((s) => s.name === '__reference_lines');
+          const axis = echarts.getInstanceByDom(mount).getModel().getComponent('yAxis').axis;
+          return {
+            lines: (lines?.markLine?.data ?? [])
+              .map((d) => ({y: d.yAxis, text: d.label.formatter})),
+            legend: option.legend[0].data ?? null,
+            axisMax: axis.scale.getExtent()[1],
+          };
+        }""",
+        tile_id,
+    )
+
+
+def test_reference_lines_draw_a_metric_value_and_reach_past_the_data(page, tmp_path_factory):
+    root = tmp_path_factory.mktemp("references")
+    create_demo(root)
+    (root / ".sqldash" / "r.yaml").write_text(_REFERENCES_DASHBOARD)
+    app = create_app(root, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    runs = []
+
+    def note_run(request):
+        if request.method == "POST" and request.url.endswith("/api/run"):
+            runs.append(json.loads(request.post_data))
+
+    page.on("request", note_run)
+    try:
+        page.goto(f"http://127.0.0.1:{port}/d/r", wait_until="load")
+        _wait_tiles(page)
+        page.wait_for_function(
+            """() => {
+              const m = document.querySelector('.tile[data-tile-id="by_category"] .chart-mount');
+              return m && echarts.getInstanceByDom(m);
+            }"""
+        )
+        state = _reference_state(page, "by_category")
+        total = page.locator('.tile[data-tile-id="total"] .big-number .value').inner_text()
+        metric_line = next(
+            line for line in state["lines"] if line["text"].startswith("All revenue")
+        )
+        assert metric_line["text"] == f"All revenue  {total}", (state, total)
+        assert any(line["y"] == 900000000 for line in state["lines"]), state
+        assert state["axisMax"] >= 900000000, state
+        assert len(state["lines"]) == 2, state
+        metric_runs = [r for r in runs if r.get("metric") == "revenue"]
+        assert len(metric_runs) == 1, runs
+    finally:
+        page.remove_listener("request", note_run)
+        _stop_server(server, thread, page)
+
+
+def test_chart_builder_adds_a_reference_and_saves_it(page, tmp_path_factory):
+    root = tmp_path_factory.mktemp("builderrefs")
+    (root / "d.yaml").write_text(
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        "tiles:\n"
+        "  - title: T\n"
+        "    chart: {type: bar, x: c, y: [n]}\n"
+        "    sql: \"SELECT c, n FROM (VALUES ('a', 1), ('b', 3)) t(c, n)\"\n"
+    )
+    app = create_app(root, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    try:
+        page.goto(f"http://127.0.0.1:{port}/d/d/query?tile=t", wait_until="load")
+        page.click("#run-btn")
+        page.wait_for_selector("#qb-preview canvas")
+        page.locator(".ref-add").click()
+        page.locator('.ref-row input[aria-label="Reference value"]').fill("10")
+        page.locator('.ref-row input[aria-label="Reference label"]').fill("Target")
+        page.locator(".ref-add").click()
+        preview = page.evaluate(
+            """() => {
+              const mount = document.querySelector('#qb-preview .chart-mount');
+              const chart = echarts.getInstanceByDom(mount);
+              const refs = chart.getOption().series.find((s) => s.name === '__reference_lines');
+              return refs.markLine.data.map((d) => d.label.formatter);
+            }"""
+        )
+        assert preview == ["Target  10"], preview
+        page.locator("#qb-type .seg-btn", has_text="Pie").click()
+        assert "set aside" in page.locator(".ref-parked").inner_text()
+        page.locator("#qb-type .seg-btn", has_text="Line").click()
+        assert page.locator(".ref-row").count() == 2
+        page.click("#qb-add")
+        page.wait_for_url("**/d/d?edit=1")
+        text = (root / "d.yaml").read_text()
+        assert (
+            "    chart: {type: line, x: c, y: [n], references: [{y: 10, label: Target}]}\n" in text
+        ), text
+    finally:
+        _stop_server(server, thread, page)
