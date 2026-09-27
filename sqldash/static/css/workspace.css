@@ -130,7 +130,7 @@ body:has(.workspace-editor) > .topbar { display:none; }
 .workspace-chart-settings { padding:12px; background:var(--surface); border:1px solid var(--border); border-radius:8px; }
 .workspace-chart-settings .field { margin:0; }
 .workspace-editor .chart-side .field > label, .workspace-chart-footer > label { font-size:10.5px; line-height:1.55; font-weight:590; letter-spacing:.06em; color:var(--ink-muted); }
-.workspace-editor #qb-type { display:flex; flex-wrap:wrap; width:100%; gap:2px; padding:3px; background:var(--page); border:1px solid var(--border); border-radius:var(--radius-sm); }
+.workspace-editor #qb-type { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); width:100%; gap:2px; padding:3px; background:var(--page); border:1px solid var(--border); border-radius:var(--radius-sm); }
 .workspace-editor #qb-type .seg-btn { border:0; background:transparent; color:var(--ink-2); font:550 12px var(--font); line-height:1.55; padding:5px 6px; border-radius:4px; flex:1 1 auto; white-space:nowrap; }
 .workspace-editor #qb-type .seg-btn.active { background:var(--surface-raised); color:var(--ink-1); box-shadow:var(--shadow-1); }
 .workspace-editor #qb-encoding { display:flex; flex-wrap:wrap; gap:12px; margin-top:15px; }
@@ -139,6 +139,7 @@ body:has(.workspace-editor) > .topbar { display:none; }
 .workspace-editor #qb-encoding .check { font-size:13px; letter-spacing:0; text-transform:none; font-weight:400; }
 .workspace-editor #qb-encoding input[type=checkbox] { width:14px; height:14px; margin:3px 0; accent-color:var(--accent); }
 .workspace-editor .dd-btn { height:32px; padding:0 10px; gap:12px; border-radius:4px; font-size:11px; }
+.workspace-editor #qb-encoding input[type=number] { height:32px; width:96px; min-width:0; padding:0 10px; border-radius:4px; font-size:11px; }
 .workspace-editor .chart-side-preview { flex:none; min-height:244px; }
 .workspace-editor #qb-preview { height:220px; min-height:220px; background:var(--surface); border:1px solid var(--border); border-radius:8px; flex:none; }
 .workspace-chart-footer { flex-shrink:0; padding:10px 0 0; border-top:1px solid var(--border); background:transparent; }
