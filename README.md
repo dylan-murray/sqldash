@@ -1,8 +1,10 @@
 <h4 align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/wordmark-dark.svg">
-    <img src="assets/wordmark-light.svg" alt="sqldash" width="230">
-  </picture>
+  <a href="https://sqldash.dev">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="assets/wordmark-dark.svg">
+      <img src="assets/wordmark-light.svg" alt="sqldash" width="230">
+    </picture>
+  </a>
   <br>
   BI for the agentic era
 </h4>
@@ -13,11 +15,6 @@
   <a href="https://github.com/dylan-murray/sqldash/actions/workflows/semgrep.yml"><img src="https://github.com/dylan-murray/sqldash/actions/workflows/semgrep.yml/badge.svg?branch=main" alt="Semgrep"></a>
   <a href="https://github.com/dylan-murray/sqldash/blob/main/pyproject.toml"><img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="License: Apache 2.0"></a>
-</p>
-
-<p align="center">
-  <a href="https://sqldash.dev"><b>sqldash.dev</b></a> ·
-  <a href="https://sqldash.dev/docs/">Docs</a>
 </p>
 
 <h2></h2>
