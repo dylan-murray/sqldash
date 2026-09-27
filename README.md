@@ -15,6 +15,11 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="License: Apache 2.0"></a>
 </p>
 
+<p align="center">
+  <a href="https://sqldash.dev"><b>sqldash.dev</b></a> ·
+  <a href="https://sqldash.dev/docs/">Docs</a>
+</p>
+
 <h2></h2>
 
 sqldash serves dashboards and metrics straight from your repos. Work with every
@@ -230,6 +235,8 @@ judge model. Without `--runner`, the command checks the definition and reference
 tools, response instructions, and grading details.
 
 ## 📚 Go further
+
+The full documentation lives at [sqldash.dev/docs](https://sqldash.dev/docs/). These guides are also in the repo:
 
 - [Dashboard files](docs/dashboard-file.md) — charts, filters, layouts, connections, and profiles.
 - [Metrics](docs/semantic-layer.md) — shared definitions, MCP tools, and BI interoperability.
