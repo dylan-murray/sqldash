@@ -6,6 +6,9 @@ import {
   buildCells,
   cellMeasure,
   colorRange,
+  colorStops,
+  divergingNeutral,
+  isDark,
   duplicateNote,
   heatmapScope,
   MAX_CATEGORIES,
@@ -160,4 +163,72 @@ test("heatmap keys do not leak into other chart types", () => {
   assert.deepEqual(next, { type: "bar", x: "category", y: ["region"] });
   const back = pruneSpecForType({ type: "bar", stacked: true, group_by: "g", x: "a" }, "heatmap");
   assert.deepEqual(back, { type: "heatmap", x: "a" });
+});
+
+test("a null category and the text 'null' stay two categories, and objects keep their own", () => {
+  const rows = [
+    [null, "a", 10],
+    ["null", "a", 20],
+    [{ k: 1 }, "a", 1],
+    [{ k: 2 }, "a", 2],
+  ];
+  const r = result([["x", "string"], ["y", "string"], ["v", "integer"]], rows);
+  const built = buildCells(r, { x: "x", y: "y", value: "v", aggregate: "sum" });
+  assert.deepEqual(built.xs, ["null", '{"k":1}', '{"k":2}', "null"]);
+  assert.deepEqual(
+    [...built.cells].sort((a, b) => a.i - b.i).map((c) => c.value),
+    [20, 1, 2, 10]
+  );
+  assert.equal(buildCells(r, { x: "x", y: "y", value: "v" }).duplicates, 0);
+});
+
+test("min and max over a very large cell do not blow the stack", () => {
+  const rows = Array.from({ length: 200_000 }, (_, i) => ["a", "b", i]);
+  const r = result([["x", "string"], ["y", "string"], ["v", "integer"]], rows);
+  assert.equal(buildCells(r, { x: "x", y: "y", value: "v", aggregate: "max" }).cells[0].value, 199_999);
+  assert.equal(buildCells(r, { x: "x", y: "y", value: "v", aggregate: "min" }).cells[0].value, 0);
+  assert.deepEqual(colorRange(rows.map((row) => row[2]), "sequential"), { min: 0, max: 199_999 });
+});
+
+test("big integer categories sort by their exact value", () => {
+  const r = result(
+    [["x", "integer"], ["y", "string"], ["v", "integer"]],
+    [
+      ["9007199254740993", "a", 1],
+      ["9007199254740992", "a", 2],
+    ]
+  );
+  assert.deepEqual(buildCells(r, { x: "x", y: "y", value: "v" }).xs, [
+    "9007199254740992",
+    "9007199254740993",
+  ]);
+});
+
+test("a y authored as a one-item list keeps that shape through inference", () => {
+  const r = result([["x", "string"], ["r", "string"], ["v", "integer"]], [["a", "us", 1]]);
+  assert.deepEqual(inferSpec({ type: "heatmap", x: "x", y: ["r"], value: "v" }, r).y, ["r"]);
+  assert.equal(inferSpec({ type: "heatmap", x: "x", y: "r", value: "v" }, r).y, "r");
+  const built = buildCells(r, { x: "x", y: ["r"], value: "v" });
+  assert.deepEqual(built.ys, ["us"]);
+});
+
+test("the diverging midpoint stands apart from the tile in both themes", () => {
+  const themes = {
+    light: { surface: "#fdfdfc", ink: "#0b0b0b" },
+    dark: { surface: "#161617", ink: "#f5f5f4" },
+  };
+  const lum = (rgb) => {
+    const [r, g, b] = rgb.match(/\d+/g).map(Number);
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  };
+  const surfaceLum = { light: lum("rgb(253, 253, 252)"), dark: lum("rgb(22, 22, 23)") };
+  for (const [name, { surface, ink }] of Object.entries(themes)) {
+    assert.equal(isDark(surface), name === "dark");
+    const neutral = divergingNeutral(surface, ink);
+    const stops = colorStops("diverging", { accent: "#3987e5", low: "#d95926", surface, neutral });
+    assert.equal(stops[2], neutral);
+    assert.ok(Math.abs(lum(neutral) - surfaceLum[name]) > 0.1, `${name} ${neutral}`);
+    assert.equal(stops[0], "#d95926");
+    assert.equal(stops[4], "#3987e5");
+  }
 });

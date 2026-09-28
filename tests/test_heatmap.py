@@ -47,6 +47,8 @@ def test_heatmap_keys_parse():
         ({"aggregate": "median"}, "sum"),
         ({"palette": "rainbow"}, "sequential"),
         ({"palette": "diverging", "midpoint": float("nan")}, "finite"),
+        ({"x_order": [float("nan")]}, "finite"),
+        ({"y_order": ["Mon", float("inf")]}, "finite"),
     ],
 )
 def test_heatmap_keys_that_cannot_mean_anything_are_refused(chart, message):
@@ -154,7 +156,25 @@ tiles:
   - title: Many
     chart: {{type: heatmap, x: sku, y: store, aggregate: count}}
     sql: SELECT 'sku' || (i % 120) AS sku, 'store' || (i % 3) AS store FROM range(0, 1200) t(i)
+  - title: Wide legend
+    format: currency
+    chart: {{type: heatmap, x: c, y: r, value: v}}
+    sql: SELECT * FROM (VALUES ('a', 'x', 12700.5), ('b', 'x', 137800.25)) t(r, c, v)
 """
+
+READ_TEXT = """() => Object.fromEntries([...document.querySelectorAll('.tile')].map(tile => {
+    const chart = echarts.getInstanceByDom(tile.querySelector('.chart-mount'));
+    const o = chart.getOption();
+    const shown = chart.getZr().storage.getDisplayList()
+        .filter(e => e.type === 'tspan' && e.style?.text)
+        .map(e => e.style.text);
+    return [tile.dataset.tileId, {
+        width: chart.getWidth(),
+        yLabel: o.yAxis[0].axisLabel.width,
+        legend: o.visualMap?.[0]?.itemHeight ?? null,
+        shown,
+    }];
+}))"""
 
 READ_TILES = """() => Object.fromEntries([...document.querySelectorAll('.tile')].map(tile => {
     const chart = echarts.getInstanceByDom(tile.querySelector('.chart-mount'));
@@ -182,6 +202,7 @@ def test_heatmaps_render_real_duckdb_cells_in_both_themes_and_on_resize(tmp_path
     app = create_app(tmp_path, allowed_hosts=["127.0.0.1", "localhost"])
     server, thread, port = _start_server(app)
     states = {}
+    texts = {}
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch()
@@ -203,6 +224,12 @@ def test_heatmaps_render_real_duckdb_cells_in_both_themes_and_on_resize(tmp_path
                 page.set_viewport_size({"width": 700, "height": 1000})
                 page.wait_for_timeout(800)
                 states[f"{theme}-narrow"] = page.evaluate(READ_TILES)
+                page.set_viewport_size({"width": 1300, "height": 1000})
+                page.wait_for_timeout(800)
+                texts[theme] = page.evaluate(READ_TEXT)
+                page.set_viewport_size({"width": 390, "height": 1000})
+                page.wait_for_timeout(800)
+                texts[f"{theme}-390"] = page.evaluate(READ_TEXT)
                 assert not errors, errors
                 context.close()
             browser.close()
@@ -236,3 +263,16 @@ def test_heatmaps_render_real_duckdb_cells_in_both_themes_and_on_resize(tmp_path
         assert many["scope"] == "60 of 120 sku values", key
         assert all(c[2] == 10 for c in many["filled"]), key
         assert many["width"] == many["mountWidth"], key
+
+    for key, tiles in texts.items():
+        region = tiles["region_category"]
+        long = [t for t in region["shown"] if t.startswith("a region")]
+        assert len(long) == 1, (key, long)
+        assert long[0].endswith("…"), (key, long)
+        if key.endswith("390"):
+            assert region["width"] < 260, (key, region["width"])
+            assert region["yLabel"] <= 64, (key, region)
+            assert region["legend"] <= 40, (key, region)
+        else:
+            assert region["yLabel"] == 180, (key, region)
+            assert len(long[0]) > 25, (key, region)

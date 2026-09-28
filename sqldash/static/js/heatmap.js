@@ -1,6 +1,7 @@
 import {
   baseOption,
   chartNumber,
+  compareNumbers,
   cssVar,
   escapeHtml,
   exactDecimal,
@@ -15,8 +16,18 @@ const NUMERIC_TYPES = new Set(["integer", "float", "decimal"]);
 const ORDERED_TYPES = new Set(["integer", "float", "decimal", "date", "timestamp"]);
 const AGGREGATE_LABELS = { sum: "Sum", avg: "Average", count: "Count", min: "Min", max: "Max" };
 
+function isNull(value) {
+  return value === null || value === undefined;
+}
+
+export function categoryLabel(value) {
+  if (isNull(value)) return "null";
+  return typeof value === "object" ? JSON.stringify(value) : String(value);
+}
+
 export function categoryKey(value) {
-  return value === null || value === undefined ? "null" : String(value);
+  if (isNull(value)) return "0";
+  return `${typeof value === "object" ? "j" : "s"}${categoryLabel(value)}`;
 }
 
 function numericValue(value) {
@@ -29,23 +40,26 @@ function numericValue(value) {
 }
 
 function compareKeys(type) {
-  if (NUMERIC_TYPES.has(type)) return (a, b) => Number(a.raw) - Number(b.raw);
-  return (a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+  if (NUMERIC_TYPES.has(type)) return (a, b) => compareNumbers(a.raw, b.raw);
+  return (a, b) => (a.label < b.label ? -1 : a.label > b.label ? 1 : 0);
 }
 
 function orderCategories(values, type, explicit) {
   const seen = new Map();
   for (const raw of values) {
     const key = categoryKey(raw);
-    if (!seen.has(key)) seen.set(key, { key, raw });
+    if (!seen.has(key)) seen.set(key, { key, raw, label: categoryLabel(raw) });
   }
-  const pinned = (explicit ?? []).map(categoryKey);
-  const pinnedSet = new Set(pinned);
-  let rest = [...seen.values()].filter((c) => !pinnedSet.has(c.key));
-  const nullLast = rest.filter((c) => c.key === "null" && (c.raw === null || c.raw === undefined));
-  rest = rest.filter((c) => !nullLast.includes(c));
+  const pinned = new Map();
+  for (const raw of explicit ?? []) {
+    const key = categoryKey(raw);
+    if (!pinned.has(key)) pinned.set(key, { key, raw, label: categoryLabel(raw) });
+  }
+  let rest = [...seen.values()].filter((c) => !pinned.has(c.key));
+  const nullLast = rest.filter((c) => isNull(c.raw));
+  rest = rest.filter((c) => !isNull(c.raw));
   if (ORDERED_TYPES.has(type)) rest.sort(compareKeys(type));
-  return [...new Set(pinned)].concat(rest.map((c) => c.key), nullLast.map((c) => c.key));
+  return [...pinned.values(), ...rest, ...nullLast];
 }
 
 function aggregateOf(kind, values, rows) {
@@ -55,10 +69,17 @@ function aggregateOf(kind, values, rows) {
     const sum = values.reduce((a, b) => a + b, 0);
     return kind === "sum" ? sum : sum / values.length;
   }
-  return kind === "min" ? Math.min(...values) : Math.max(...values);
+  let best = values[0];
+  for (const v of values) if (kind === "min" ? v < best : v > best) best = v;
+  return best;
+}
+
+function withOneY(spec) {
+  return Array.isArray(spec.y) ? { ...spec, y: spec.y[0] ?? null } : spec;
 }
 
 export function buildCells(result, spec, { limit = MAX_CATEGORIES } = {}) {
+  spec = withOneY(spec);
   const col = (name) => result.columns.findIndex((c) => c.name === name);
   const xi = col(spec.x);
   const yi = col(spec.y);
@@ -66,10 +87,10 @@ export function buildCells(result, spec, { limit = MAX_CATEGORIES } = {}) {
   const type = (i) => result.columns[i]?.type;
   const allX = orderCategories(result.rows.map((r) => r[xi]), type(xi), spec.x_order);
   const allY = orderCategories(result.rows.map((r) => r[yi]), type(yi), spec.y_order);
-  const xs = allX.slice(0, limit);
-  const ys = allY.slice(0, limit);
-  const xIndex = new Map(xs.map((k, i) => [k, i]));
-  const yIndex = new Map(ys.map((k, i) => [k, i]));
+  const xIndex = new Map(allX.slice(0, limit).map((c, i) => [c.key, i]));
+  const yIndex = new Map(allY.slice(0, limit).map((c, i) => [c.key, i]));
+  const xs = allX.slice(0, limit).map((c) => c.label);
+  const ys = allY.slice(0, limit).map((c) => c.label);
   const groups = new Map();
   let hiddenRows = 0;
   let nonNumeric = 0;
@@ -130,23 +151,32 @@ export function mix(from, to, t) {
   return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
 }
 
+export function isDark(color) {
+  const c = parseColor(color);
+  if (!c) return false;
+  return (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255 < 0.5;
+}
+
+export function divergingNeutral(surface, ink) {
+  return mix(surface, ink, isDark(surface) ? 0.3 : 0.12);
+}
+
 export function colorStops(palette, { accent, low, surface, neutral }) {
   if (palette === "diverging") {
-    return [
-      low,
-      mix(surface, low, 0.55),
-      neutral,
-      mix(surface, accent, 0.55),
-      accent,
-    ];
+    const step = isDark(surface) ? (end) => mix(surface, end, 0.78) : (end) => mix(neutral, end, 0.6);
+    return [low, step(low), neutral, step(accent), accent];
   }
   return [0.14, 0.34, 0.56, 0.78, 1].map((t) => mix(surface, accent, t));
 }
 
 export function colorRange(values, palette, midpoint) {
   if (!values.length) return { min: 0, max: 1 };
-  let min = Math.min(...values);
-  let max = Math.max(...values);
+  let min = Infinity;
+  let max = -Infinity;
+  for (const v of values) {
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
   if (palette === "diverging") {
     const mid = Number.isFinite(midpoint) ? midpoint : 0;
     const span = Math.max(Math.abs(max - mid), Math.abs(mid - min)) || 1;
@@ -187,6 +217,7 @@ export function duplicateNote(count) {
 }
 
 export function heatmapOption(spec, result, forcedColor, height = 0) {
+  spec = withOneY(spec);
   const built = buildCells(result, spec);
   const fmt = spec.aggregate === "count" ? "number" : seriesFormat(spec, spec.value);
   const compact = height > 0 && height < 170;
@@ -199,7 +230,7 @@ export function heatmapOption(spec, result, forcedColor, height = 0) {
     accent: palette === "diverging" ? cssVar("--series-1") : accent,
     low: cssVar("--series-6"),
     surface,
-    neutral: mix(surface, muted, 0.22),
+    neutral: divergingNeutral(surface, cssVar("--ink-1")),
   });
   const scope = heatmapScope(built, spec, result);
   const showLegend = spec.legend !== false && !compact;
@@ -216,15 +247,15 @@ export function heatmapOption(spec, result, forcedColor, height = 0) {
     color: muted,
     fontSize: 11,
     hideOverlap: true,
-    width: 100,
     overflow: "truncate",
+    ellipsis: "…",
   };
   option.xAxis = {
     type: "category",
     data: built.xs,
     axisLine: { show: false },
     axisTick: { show: false },
-    axisLabel: { ...axisLabel, interval: "auto" },
+    axisLabel: { ...axisLabel, width: 120, interval: "auto" },
     splitArea: { show: false },
   };
   option.yAxis = {
@@ -233,7 +264,7 @@ export function heatmapOption(spec, result, forcedColor, height = 0) {
     inverse: true,
     axisLine: { show: false },
     axisTick: { show: false },
-    axisLabel: { ...axisLabel, interval: "auto" },
+    axisLabel: { ...axisLabel, width: 180, interval: "auto" },
     splitArea: { show: false },
   };
   option.legend.show = false;
@@ -327,6 +358,31 @@ export function heatmapOption(spec, result, forcedColor, height = 0) {
     formatter: legendLabel,
     textGap: 8,
   };
+  option.media = [
+    {
+      option: {
+        xAxis: { axisLabel: { width: 120 } },
+        yAxis: { axisLabel: { width: 180 } },
+        visualMap: { itemHeight: 96, textGap: 8 },
+      },
+    },
+    {
+      query: { maxWidth: 480 },
+      option: {
+        xAxis: { axisLabel: { width: 72 } },
+        yAxis: { axisLabel: { width: 88 } },
+        visualMap: { itemHeight: 72, textGap: 6 },
+      },
+    },
+    {
+      query: { maxWidth: 260 },
+      option: {
+        xAxis: { axisLabel: { width: 56 } },
+        yAxis: { axisLabel: { width: 64 } },
+        visualMap: { itemHeight: 36, textGap: 4 },
+      },
+    },
+  ];
   if (built.duplicates) setEmptyReason(option, duplicateNote(built.duplicates));
   else if (!filled.length) setEmptyReason(option, "No values to plot");
   if (scope) {

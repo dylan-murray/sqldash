@@ -5,7 +5,7 @@ import re
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, field_validator, model_validator
 
 ChartType = Literal["line", "bar", "area", "scatter", "pie", "heatmap", "big_number", "table"]
 REFERENCE_CHART_TYPES = ("line", "bar", "area", "scatter")
@@ -130,8 +130,8 @@ class ChartSpec(BaseModel):
     aggregate: Literal["sum", "avg", "count", "min", "max"] | None = None
     palette: Literal["sequential", "diverging"] | None = None
     midpoint: float | None = Field(default=None, allow_inf_nan=False)
-    x_order: list[str | int | float | bool] | None = None
-    y_order: list[str | int | float | bool] | None = None
+    x_order: list[str | int | FiniteFloat | bool] | None = None
+    y_order: list[str | int | FiniteFloat | bool] | None = None
     references: list[ReferenceLine] = []
 
     @field_validator("y", mode="before")

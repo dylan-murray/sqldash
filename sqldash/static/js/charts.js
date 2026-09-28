@@ -432,7 +432,7 @@ function inferHeatmap(s, result) {
   ].map((c) => c.name);
   if (!s.x) s.x = pool.shift() ?? null;
   if (!y) y = pool.find((name) => name !== s.x) ?? null;
-  s.y = y;
+  s.y = Array.isArray(s.y) && s.y.length === 1 && s.y[0] === y ? [y] : y;
   if (!s.value && s.aggregate !== "count") {
     const numeric = result.columns.filter(
       (c) => NUMERIC_TYPES.has(c.type) && c.name !== s.x && c.name !== y
