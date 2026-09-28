@@ -150,13 +150,22 @@ test("a number is sent the way a number input takes it, and a date must be on th
   assert.match(one("date", "2026-13-01").error, /not a date/);
 });
 
-test("a boolean cell drills into the option its filter bar renders for it", () => {
-  const flags = plan([{ param: "active", type: "select", column: "active", options: ["all", "True", "False"] }]);
-  const columns = [{ name: "active", type: "boolean" }];
-  const sent = (value) => new URL(drillUrl(flags, [value], columns, context).href, "http://x");
-  assert.equal(sent(true).searchParams.get("f_active"), "True");
-  assert.equal(sent(false).searchParams.get("f_active"), "False");
+test("a cell drills into its option however either side spells the value", () => {
+  const one = (options, value, type = "float") =>
+    drillUrl(
+      plan([{ param: "v", type: "select", column: "v", options }]),
+      [value],
+      [{ name: "v", type }],
+      context,
+    );
+  const sent = (...args) => new URL(one(...args).href, "http://x").searchParams.get("f_v");
+  assert.equal(sent(["all", "true", "false"], true, "boolean"), "true");
+  assert.equal(sent(["all", "true", "false"], "True", "string"), "true");
+  assert.equal(sent(["1", "2"], 1.0), "1");
+  assert.equal(sent(["1", "2"], "1.0", "string"), "1");
+  assert.equal(sent(["0.000001"], 0.000001), "0.000001");
+  assert.match(one(["1", "2"], 3).error, /'3' is not one of the options/);
   const text = plan([{ param: "active", type: "text", column: "active" }]);
-  const href = drillUrl(text, [true], columns, context).href;
+  const href = drillUrl(text, [true], [{ name: "active", type: "boolean" }], context).href;
   assert.equal(new URL(href, "http://x").searchParams.get("f_active"), "true");
 });

@@ -7,6 +7,7 @@ from sqlalchemy.exc import NoSuchModuleError
 
 from sqldash.execution import ExecutionRegistry
 from sqldash.lint import lint_project, validate_dashboard
+from sqldash.params import option_value
 from sqldash.project.drill import plan_drill, plan_drills
 from sqldash.project.store import (
     DashboardStore,
@@ -491,8 +492,16 @@ def test_an_inline_metric_tile_on_a_missing_dialect_still_gets_a_report(tmp_path
     assert any("dialect package installed" in w for w in payload["lint"]), payload
 
 
-def test_boolean_options_reach_the_plan_as_the_filter_bar_renders_them(tmp_path):
-    detail = DETAIL.replace("options: [all, gold, silver]", "options: [true, false]")
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        ("[true, false]", ["all", "true", "false"]),
+        ("[1.0, 2.0]", ["all", "1", "2"]),
+        ("[1e-06, 0.5]", ["all", "0.000001", "0.5"]),
+    ],
+)
+def test_plan_options_are_spelled_the_way_the_browser_spells_a_cell(tmp_path, options, expected):
+    detail = DETAIL.replace("options: [all, gold, silver]", f"options: {options}")
     store = _project(
         tmp_path,
         overview=_with_drill("{dashboard: detail, filters: {tier: customer}}"),
@@ -500,4 +509,41 @@ def test_boolean_options_reach_the_plan_as_the_filter_bar_renders_them(tmp_path)
     )
     dashboard, _, _ = store.load("overview")
     plan = plan_drill(store, "overview", dashboard, dashboard.tiles[0])
-    assert plan["params"][0]["options"] == ["all", "True", "False"]
+    assert plan["params"][0]["options"] == expected
+
+
+def test_the_filter_bar_values_use_that_spelling_and_keep_their_labels(tmp_path):
+    detail = DETAIL.replace(
+        "  - {name: tier, type: select, options: [all, gold, silver]}\n",
+        "  - {name: tier, type: select, options: [true, false], default: true}\n"
+        "  - {name: rate, type: select, options: [1.0, 1e-06]}\n",
+    )
+    _project(tmp_path, overview=OVERVIEW, detail=detail)
+    app = create_app(tmp_path, allowed_hosts=["testserver"])
+    with TestClient(app) as client:
+        page = client.get("/d/detail").text
+    assert '<option value="true" selected>True</option>' in page
+    assert '<option value="false" >False</option>' in page
+    assert '<option value="1" >1.0</option>' in page
+    assert '<option value="0.000001" >1e-06</option>' in page
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (1.0, "1"),
+        (1e-06, "0.000001"),
+        (1e-07, "1e-7"),
+        (1.5e21, "1.5e+21"),
+        (1e21, "1e+21"),
+        (1e20, "100000000000000000000"),
+        (0.1 + 0.2, "0.30000000000000004"),
+        (-0.000001234, "-0.000001234"),
+        (5e-324, "5e-324"),
+        (True, "true"),
+        (7, "7"),
+        ("True", "True"),
+    ],
+)
+def test_option_value_matches_javascript_string(value, expected):
+    assert option_value(value) == expected

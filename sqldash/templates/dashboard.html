@@ -101,9 +101,9 @@
              value="{{ (f.resolved_default or {}).get('end', '') }}" hidden>
     </div>
     {% elif f.type == "select" %}
-    <select id="filter-{{ f.name }}" data-filter="{{ f.name }}"{% if f.options_sql %} data-options-sql="1"{% if f.resolved_default and f.resolved_default != 'all' %} data-default="{{ f.resolved_default }}"{% endif %}{% endif %}>
-      {% for opt in f.options or (["all"] if f.options_sql else []) %}
-      <option value="{{ opt }}" {% if opt == f.resolved_default %}selected{% endif %}>{{ opt }}</option>
+    <select id="filter-{{ f.name }}" data-filter="{{ f.name }}"{% if f.options_sql %} data-options-sql="1"{% if f.default_value and f.default_value != 'all' %} data-default="{{ f.default_value }}"{% endif %}{% endif %}>
+      {% for value, label in f.choices or ([("all", "all")] if f.options_sql else []) %}
+      <option value="{{ value }}" {% if value == f.default_value %}selected{% endif %}>{{ label }}</option>
       {% endfor %}
     </select>
     {% elif f.type == "date" %}

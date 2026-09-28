@@ -17,6 +17,7 @@ import {
   followDrill,
   initDrillCrumb,
   markDrillTile,
+  matchOption,
   refreshDrillLinks,
   rowForPoint,
   tableDrillCells,
@@ -807,11 +808,16 @@ function refuseUrlValue(bind, value) {
   toast(`${label} has no '${value}' to filter to, so it is showing its default`, "error");
 }
 
+function selectValue(select, value) {
+  return matchOption([...select.options].map((o) => o.value), value) ?? value;
+}
+
 export function applyFiltersFromUrl() {
   const params = new URLSearchParams(location.search);
   let any = false;
   for (const input of document.querySelectorAll(".filter-bar [data-filter]")) {
-    const value = params.get(`f_${input.dataset.filter}`);
+    const asked = params.get(`f_${input.dataset.filter}`);
+    const value = asked !== null && input.tagName === "SELECT" ? selectValue(input, asked) : asked;
     if (value !== null && value !== input.value) {
       const before = input.value;
       input.value = value;
@@ -860,7 +866,8 @@ async function loadFilterOptions() {
         opt.textContent = v;
         select.appendChild(opt);
       }
-      if ([...select.options].some((o) => o.value === desired)) select.value = desired;
+      const option = matchOption([...select.options].map((o) => o.value), desired);
+      if (option !== undefined) select.value = option;
       else if (asked !== null) refuseUrlValue(name, asked);
       if (select.value !== "all" ) {
         select.dispatchEvent(new Event("change", { bubbles: true }));

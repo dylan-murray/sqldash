@@ -59,9 +59,20 @@ function valueText(value, type, column) {
   return { text: type === "number" ? numberText(text.trim()) : text };
 }
 
-export function optionText(raw, text, options) {
-  if (typeof raw !== "boolean" || !options) return text;
-  return options.find((option) => option.toLowerCase() === text) ?? text;
+function canonical(value) {
+  if (typeof value === "boolean" || typeof value === "number") return String(value);
+  const text = String(value);
+  const lower = text.trim().toLowerCase();
+  if (lower === "true" || lower === "false") return lower;
+  if (/^[+-]?\d+$/.test(text.trim())) return BigInt(text.trim()).toString();
+  if (NUMBER_TEXT.test(text.trim())) return String(Number(text));
+  return text;
+}
+
+export function matchOption(options, value) {
+  if (options.includes(value)) return value;
+  const wanted = canonical(value);
+  return options.find((option) => canonical(option) === wanted);
 }
 
 export function drillUrl(plan, row, columns, context) {
@@ -83,10 +94,14 @@ export function drillUrl(plan, row, columns, context) {
       if (at < 0) return { error: `column '${param.column}' is not in this tile's result` };
       const value = valueText(row?.[at], param.type, param.column);
       if (value.error) return { error: value.error };
-      text = optionText(row[at], value.text, param.options);
+      text = value.text;
     }
-    if (param.options && !param.options.includes(text)) {
-      return { error: `'${text}' is not one of the options of ${plan.title}'s ${param.param} filter` };
+    if (param.options) {
+      const option = matchOption(param.options, text);
+      if (option === undefined) {
+        return { error: `'${text}' is not one of the options of ${plan.title}'s ${param.param} filter` };
+      }
+      text = option;
     }
     url.searchParams.set(`f_${param.param}`, text);
   }

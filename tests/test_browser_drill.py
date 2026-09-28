@@ -260,6 +260,22 @@ filters:
 tiles:
   - {title: Rows, sql: "SELECT 1 AS n"}
 """,
+    "typed": """title: Typed
+source: {type: duckdb, attach_files: true}
+tiles:
+  - title: Typed
+    chart: table
+    sql: "SELECT 1.0::DOUBLE AS rate, FALSE AS active"
+    drill: {dashboard: flags, filters: {rate: rate, active: active}}
+""",
+    "flags": """title: Flags
+source: {type: duckdb, attach_files: true}
+filters:
+  - {name: active, type: select, options: [true, false], default: true}
+  - {name: rate, type: select, options: [1.0, 2.0]}
+tiles:
+  - {title: Rows, sql: "SELECT 1 AS n"}
+""",
     "dest_a": "title: Dest A\nsource: {type: duckdb, attach_files: true}\n"
     "filters:\n  - {name: k, type: text}\ntiles:\n  - {title: A, sql: 'SELECT 1 AS n'}\n",
     "dest_b": "title: Dest B\nsource: {type: duckdb, attach_files: true}\n"
@@ -371,3 +387,24 @@ def test_a_table_link_invalid_on_load_works_once_the_filters_make_it_valid(page,
     page.keyboard.press("Enter")
     page.wait_for_url("**/d/stale_dest?**")
     assert _query(page)["f_region"] == "eu"
+
+
+def test_numeric_and_boolean_cells_drill_into_static_options(page, edges):
+    page.goto(f"{edges}/d/typed")
+    _wait_tiles(page)
+    page.locator('.tile[data-tile-id="typed"] a.cell-link').first.click()
+    page.wait_for_url("**/d/flags?**")
+    _wait_tiles(page)
+    assert _query(page)["f_rate"] == "1"
+    assert _query(page)["f_active"] == "false"
+    assert page.eval_on_selector('select[data-filter="rate"]', "e => e.value") == "1"
+    assert page.eval_on_selector('select[data-filter="active"]', "e => e.value") == "false"
+    assert page.locator(".toast-error").count() == 0
+
+
+def test_an_old_url_spelling_still_sets_the_filter(page, edges):
+    page.goto(f"{edges}/d/flags?f_active=False&f_rate=2.0")
+    _wait_tiles(page)
+    assert page.eval_on_selector('select[data-filter="active"]', "e => e.value") == "false"
+    assert page.eval_on_selector('select[data-filter="rate"]', "e => e.value") == "2"
+    assert page.locator(".toast-error").count() == 0
