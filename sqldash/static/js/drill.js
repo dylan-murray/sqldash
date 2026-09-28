@@ -43,6 +43,11 @@ export function rowForPoint(spec, result, point) {
   return rows.find((row) => String(row[key]) === String(point.name)) ?? null;
 }
 
+export function clickedRow(spec, result, point) {
+  const drawn = rowForPoint(spec, result, point);
+  return result.unshifted?.[result.rows.indexOf(drawn)] ?? drawn;
+}
+
 export function clickValue(value, type, column) {
   if (value === null || value === undefined || value === "") {
     return { error: `${column} is empty here, so there is no value to use` };

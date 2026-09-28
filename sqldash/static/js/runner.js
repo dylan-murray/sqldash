@@ -23,13 +23,13 @@ import {
 } from "/static/js/crossfilter.js";
 import {
   chartKeys,
+  clickedRow,
   drillUrl,
   followDrill,
   initDrillCrumb,
   markDrillTile,
   matchOption,
   refreshDrillLinks,
-  rowForPoint,
   tableDrillCells,
   valueKind,
 } from "/static/js/drill.js";
@@ -431,11 +431,6 @@ function filterKinds() {
 
 function drillContext() {
   return { dashboardName, filters: filterValues(), kinds: filterKinds(), search: location.search };
-}
-
-function clickedRow(spec, result, point) {
-  const drawn = rowForPoint(spec, result, point);
-  return result.unshifted?.[result.rows.indexOf(drawn)] ?? drawn;
 }
 
 function drillFromPoint(plan, spec, result, point, event) {

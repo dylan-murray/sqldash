@@ -98,3 +98,20 @@ def test_validate_dashboard_names_a_cross_filter_column_the_query_does_not_retur
         registry.shutdown()
     assert payload["valid"] is False
     assert any("cross_filter reads column 'area'" in e for e in payload["errors"]), payload
+
+
+def test_a_tile_write_keeps_replaces_and_removes_its_cross_filter(tmp_path):
+    (tmp_path / "overview.yaml").write_text(_dashboard("{region: region}"))
+    store = DashboardStore(tmp_path)
+    base = {"id": "extra", "title": "Extra", "chart": "bar", "query": "q"}
+
+    def write(tile):
+        store.upsert_tile("overview", tile, "SELECT 'us' AS region", store.load("overview")[2])
+        return next(t for t in store.load("overview")[0].tiles if t.id == "extra").cross_filter
+
+    assert write({**base, "cross_filter": {"region": "region"}}) == {"region": "region"}
+    assert write({**base, "cross_filter": False}) is False
+    assert write(base) is False
+    assert write({**base, "cross_filter": None}) is None
+    text = (tmp_path / "overview.yaml").read_text()
+    assert "    cross_filter: {region: region}\n" in text

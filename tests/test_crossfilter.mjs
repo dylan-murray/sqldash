@@ -92,7 +92,7 @@ test("marks outside the selection are dimmed and the picked ones kept", () => {
   assert.deepEqual(series.data[0].value, ["us", 10]);
 });
 
-test("a line selection fades the stroke and area and keeps only the picked point drawn", () => {
+test("a line selection fades the stroke and area and draws only the picked point until hovered", () => {
   const days = Array.from({ length: 50 }, (_, i) => [`2026-01-${String(i + 1).padStart(2, "0")}`, i]);
   const trend = { columns: [{ name: "day", type: "date" }, { name: "n", type: "integer" }], rows: days };
   const single = crossFilterPlan({ cross_filter: { day: "day" } }, [{ name: "day", type: "date" }]);
@@ -113,11 +113,56 @@ test("a line selection fades the stroke and area and keeps only the picked point
   assert.equal(series.showSymbol, true);
   assert.ok(Math.abs(series.lineStyle.opacity - 0.55 * 0.28) < 1e-9);
   assert.equal(series.areaStyle.opacity, 0.28);
-  assert.equal(series.data[9].symbol, undefined);
-  assert.equal(series.data[0].symbol, "none");
+  assert.equal(series.data[9].itemStyle, undefined);
+  assert.equal(series.data[0].itemStyle.opacity, 0);
+  assert.equal(series.data[0].emphasis.itemStyle.opacity, 1);
   const bars = dimUnpicked({ series: [{ ...option.series[0], type: "bar" }] }, spec, trend, single, {
     day: "2026-01-10",
   });
   assert.equal(bars[0].lineStyle, undefined);
   assert.equal(bars[0].data[0].itemStyle.opacity, 0.28);
+});
+
+test("a filter sitting at a real default still has to match, only an unset or all one is open", () => {
+  const withDefault = [
+    { name: "region", type: "select", resolved_default: "all" },
+    { name: "channel", type: "text", resolved_default: "web" },
+  ];
+  const pair = crossFilterPlan({ cross_filter: { region: "region", channel: "channel" } }, withDefault);
+  const defaults = { region: "all", channel: "web" };
+  assert.equal(activeValues(pair, { region: "all", channel: "web" }, defaults), null);
+  const active = activeValues(pair, { region: "eu", channel: "web" }, defaults);
+  assert.deepEqual(active, { region: "eu", channel: "web" });
+  assert.equal(rowIsPicked(pair, ["eu", "web", 1], result.columns, active), true);
+  assert.equal(rowIsPicked(pair, ["eu", "store", 1], result.columns, active), false);
+});
+
+test("a compare chart dims against the row a point came from, not where it is drawn", () => {
+  const byDay = crossFilterPlan({ cross_filter: { day: "day" } }, [{ name: "day", type: "date" }]);
+  const merged = {
+    columns: [
+      { name: "day", type: "date" },
+      { name: "n", type: "integer" },
+      { name: "__period", type: "string" },
+    ],
+    rows: [
+      ["2026-01-10", 5, "current"],
+      ["2026-01-10", 3, "previous"],
+    ],
+    unshifted: [
+      ["2026-01-10", 5, "current"],
+      ["2025-01-10", 3, "previous"],
+    ],
+  };
+  const option = {
+    series: [
+      { type: "bar", name: "current", data: [["2026-01-10", 5]] },
+      { type: "bar", name: "previous", data: [["2026-01-10", 3]] },
+    ],
+  };
+  const spec = { type: "bar", x: "day", y: ["n"], group_by: "__period" };
+  const opacity = (active) =>
+    dimUnpicked(option, spec, merged, byDay, active).map((s) => s.data[0].itemStyle?.opacity ?? 1);
+  assert.deepEqual(opacity({ day: "2025-01-10" }), [0.28, 1]);
+  assert.deepEqual(opacity({ day: "2026-01-10" }), [1, 0.28]);
 });

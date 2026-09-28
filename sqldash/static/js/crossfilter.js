@@ -1,5 +1,5 @@
 import { escapeHtml } from "./charts.js";
-import { clickValue, rowForPoint } from "./drill.js";
+import { clickValue, clickedRow } from "./drill.js";
 
 const FUNNEL =
   '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" ' +
@@ -40,11 +40,14 @@ export function picked(plan, row, columns) {
 
 export function activeValues(plan, current, offs) {
   const values = {};
-  for (const { name } of plan.entries) {
+  let on = false;
+  for (const { name, def } of plan.entries) {
     const value = current[name];
-    if (value !== undefined && value !== "" && value !== offs[name]) values[name] = value;
+    if (value === undefined || value === "") continue;
+    if (value !== offs[name]) on = true;
+    if (!(def.type === "select" && value === "all")) values[name] = value;
   }
-  return Object.keys(values).length ? values : null;
+  return on ? values : null;
 }
 
 export function toggled(plan, values, current, offs) {
@@ -68,13 +71,19 @@ export function dimUnpicked(option, spec, result, plan, active, opacity = 0.28) 
     let missed = false;
     const data = (series.data ?? []).map((datum, dataIndex) => {
       const name = Array.isArray(datum) ? datum[0] : (datum?.name ?? datum);
-      const row = rowForPoint(spec, result, { dataIndex, seriesName: series.name, name });
+      const row = clickedRow(spec, result, { dataIndex, seriesName: series.name, name });
       const item = datum !== null && typeof datum === "object" && !Array.isArray(datum)
         ? { ...datum }
         : { value: datum };
       if (row && rowIsPicked(plan, row, result.columns, active)) return item;
       missed = true;
-      if (line && !series.showSymbol) return { ...item, symbol: "none" };
+      if (line && !series.showSymbol) {
+        return {
+          ...item,
+          itemStyle: { ...(item.itemStyle ?? {}), opacity: 0 },
+          emphasis: { itemStyle: { opacity: 1 } },
+        };
+      }
       return { ...item, itemStyle: { ...(item.itemStyle ?? {}), opacity } };
     });
     if (!line || !missed) return { data };

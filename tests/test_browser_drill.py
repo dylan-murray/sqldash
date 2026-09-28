@@ -673,7 +673,7 @@ def test_a_picked_value_equal_to_a_default_keeps_the_selection_and_its_chip(page
     page.wait_for_function("() => location.search.includes('f_region=eu')")
     chip = floor.locator("button.tile-xf")
     chip.wait_for()
-    assert chip.text_content() == "eu"
+    assert chip.text_content() == "eu · 0"
     floor.locator("td.is-picked").wait_for()
     chip.click()
     page.wait_for_function("() => location.search.includes('f_region=all')")
@@ -707,13 +707,38 @@ def test_a_line_selection_fades_the_stroke_and_marks_the_picked_point(page, edge
           return {
             line: s.lineStyle?.opacity ?? 1,
             show: s.showSymbol,
-            picked: s.data[9].symbol ?? s.symbol,
-            other: s.data[0].symbol ?? s.symbol,
+            picked: s.data[9].itemStyle?.opacity ?? 1,
+            other: s.data[0].itemStyle?.opacity ?? 1,
           };
         }""",
         mount,
     )
     assert series["line"] < 1, series
     assert series["show"] is True, series
-    assert series["picked"] != "none", series
-    assert series["other"] == "none", series
+    assert series["picked"] == 1, series
+    assert series["other"] == 0, series
+
+
+def test_another_point_on_a_long_selected_line_can_still_be_picked(page, edges):
+    page.goto(f"{edges}/d/xf?f_day=2026-01-10")
+    _wait_tiles(page)
+    mount = '.tile[data-tile-id="trend"] .chart-mount'
+    page.wait_for_function(
+        f"() => {{ const m = document.querySelector('{mount}'); "
+        "return Boolean(m && echarts.getInstanceByDom(m)); }"
+    )
+    point = page.evaluate(
+        """(mount) => {
+          const el = document.querySelector(mount);
+          const chart = echarts.getInstanceByDom(el);
+          const datum = chart.getOption().series[0].data[19];
+          const [x, y] = chart.convertToPixel({seriesIndex: 0}, datum.value ?? datum);
+          const r = el.getBoundingClientRect();
+          return {x: r.x + x, y: r.y + y};
+        }""",
+        mount,
+    )
+    page.mouse.move(point["x"], point["y"])
+    page.wait_for_timeout(200)
+    page.mouse.click(point["x"], point["y"])
+    page.wait_for_function("() => location.search.includes('f_day=2026-01-20')")
