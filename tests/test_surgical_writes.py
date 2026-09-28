@@ -3048,3 +3048,32 @@ def test_an_unchanged_save_of_a_shared_chart_is_byte_identical(tmp_path, doc):
     chart = dashboard.tiles[0].chart.model_dump(exclude_defaults=True)
     text, _ = _save_tile(tmp_path, "a", chart)
     assert text == doc, text
+
+
+TILE_MERGE = (
+    "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+    'queries: {q: "SELECT 1 AS w, 2 AS revenue, 0.5 AS rate"}\n'
+    "tiles:\n"
+    "  - &base\n"
+    "    title: A\n"
+    "    query: q\n"
+    "    chart:\n"
+    "      type: bar\n"
+    "      y: [revenue, rate]\n"
+    "      series: {rate: {type: line, axis: right}}\n"
+    "  - <<: *base\n"
+    "    title: B\n"
+)
+
+
+def test_editing_a_tile_that_merges_another_leaves_the_other_alone(tmp_path):
+    (tmp_path / "d.yaml").write_text(TILE_MERGE)
+    chart = {
+        "type": "bar",
+        "y": ["revenue", "rate"],
+        "series": {"rate": {"type": "area", "axis": "right"}},
+    }
+    text, charts = _save_tile(tmp_path, "b", chart)
+    marks = {tile: c.series["rate"].type for tile, c in charts.items()}
+    assert marks == {"a": "line", "b": "area"}, text
+    assert text.startswith(TILE_MERGE.split("  - <<: *base")[0]), text
