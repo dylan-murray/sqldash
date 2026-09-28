@@ -273,7 +273,9 @@ export class ChartBuilder {
         fields.push(["Count", numberInput(spec.bins, "bins", { min: 1, max: MAX_BINS, step: 1 })]);
       } else if (mode === "width") {
         fields.push(["Width", numberInput(spec.bin_width, "bin_width", { min: 0 })]);
-        fields.push(["Start at", numberInput(spec.bin_start, "bin_start", { placeholder: "0" })]);
+        const start = numberInput(spec.bin_start, "bin_start", { placeholder: "0" });
+        start.disabled = spec.bin_width == null;
+        fields.push(["Start at", start]);
       }
       fields.push([
         "Show",
@@ -312,10 +314,8 @@ export class ChartBuilder {
         else this._spec[key] = input.value || null;
         if (key === "palette" && this._spec.palette !== "diverging") this._spec.midpoint = null;
         if (key === "palette") this.renderEncodings();
-        if (key === "bin_width" && this._spec.bin_width == null && this._spec.bin_start != null) {
-          this._spec.bin_start = null;
-          this.renderEncodings();
-        }
+        if (this._spec.bin_start != null && this._spec.bin_width == null) this._spec.bin_start = null;
+        if (key === "bin_width" && this._spec.bin_width == null) this.renderEncodings();
         this.renderPreview();
         this.onChange();
       });

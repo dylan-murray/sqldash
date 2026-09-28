@@ -204,6 +204,35 @@ test("counts in the scope line follow the dashboard locale", () => {
   assert.equal(histogramScope(summary, { truncated: false }), "1,500 values · 1 null excluded");
 });
 
+test("an authored bin_start is never snapped to zero", () => {
+  const summary = binValues([0, 0.005, 0.01, 100000000.01], { bin_width: 100000000, bin_start: 0.01 });
+  assert.deepEqual(
+    summary.bins.map((b) => b.count),
+    [2, 2]
+  );
+  assert.equal(summary.bins[1].lo, 0.01);
+});
+
+test("decimals come from the actual edges, in count mode and on shifted axis ticks", () => {
+  const counted = binValues([0.001, 1.001, 2.001], { bins: 2 });
+  assert.deepEqual(
+    counted.bins.map((b) => binLabel(b, "number", counted.digits)),
+    ["0.001 to under 1.001", "1.001 to 2.001"]
+  );
+  const shifted = binValues([0.001, 1.001, 2.001], { bin_width: 1, bin_start: 0.001 });
+  assert.equal(edgeLabel(1.001, "number", 1, shifted.digits), "1.001");
+  const uneven = binValues([22.5, 81.08, 100, 374, 200, 300], { bins: 12 });
+  assert.equal(uneven.digits, 2);
+});
+
+test("a bin_width too fine for 200 bins still falls back to auto before any range check", () => {
+  const summary = binValues([0, 1e12], { bin_width: 0.0001 });
+  assert.equal(summary.unbinnable, undefined);
+  assert.equal(summary.mode, "auto");
+  assert.ok(summary.tooMany > MAX_BINS);
+  assert.ok(summary.bins.length >= 1);
+});
+
 test("interval labels say which edge is included", () => {
   const summary = binValues([0, 5, 10], { bin_width: 5 });
   assert.equal(binLabel(summary.bins[0], "number"), "0 to under 5");

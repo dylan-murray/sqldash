@@ -137,6 +137,9 @@ tiles:
   - title: Too wide
     chart: {type: histogram, x: v}
     sql: SELECT * FROM (VALUES (-1e308), (1e308)) t(v)
+  - title: Shifted
+    chart: {type: histogram, x: v, bin_width: 1, bin_start: 0.001}
+    sql: SELECT * FROM (VALUES (0.001), (1.001), (2.001)) t(v)
 """
 
 
@@ -169,6 +172,8 @@ def test_histograms_render_real_duckdb_distributions(tmp_path):
                         ticks: option.xAxis[0].axisLabel.customValues ?? null,
                         note: tile.querySelector('.truncated-note')?.textContent ?? null,
                         empty: tile.querySelector('.chart-empty')?.textContent ?? null,
+                        texts: echarts.getInstanceByDom(mount).getZr().storage.getDisplayList()
+                            .filter(e => e.type === 'tspan').map(e => e.style.text),
                     }];
                 }))""")
             page.set_viewport_size({"width": 390, "height": 1000})
@@ -211,12 +216,14 @@ def test_histograms_render_real_duckdb_distributions(tmp_path):
     assert truncated["note"] == "showing first 1,000 rows (truncated)"
     assert state["too_wide"]["bins"] == []
     assert state["too_wide"]["empty"] == UNBINNABLE
+    assert {"0.001", "1.001", "2.001"} <= set(state["shifted"]["texts"]), state["shifted"]["texts"]
     assert narrow["texts"], narrow
     assert all(right <= narrow["width"] - 8 for _, right in narrow["texts"]), narrow
 
 
 @pytest.mark.skipif(not _browser_available(), reason="playwright browser not installed")
-def test_clearing_the_width_in_the_builder_drops_bin_start_too(tmp_path):
+@pytest.mark.parametrize("bins", ["bin_width: 10, bin_start: 5", "bin_width: 10"])
+def test_clearing_the_width_in_the_builder_drops_bin_start_too(tmp_path, bins):
     from playwright.sync_api import sync_playwright
 
     doc = (
@@ -224,7 +231,7 @@ def test_clearing_the_width_in_the_builder_drops_bin_start_too(tmp_path):
         "source: {type: duckdb, database: ':memory:'}\n"
         "tiles:\n"
         "  - title: Spread\n"
-        "    chart: {type: histogram, x: v, bin_width: 10, bin_start: 5}\n"
+        f"    chart: {{type: histogram, x: v, {bins}}}\n"
         "    sql: SELECT i::DOUBLE AS v FROM range(0, 100) t(i)\n"
     )
     (tmp_path / "h.yaml").write_text(doc)
@@ -249,6 +256,8 @@ def test_clearing_the_width_in_the_builder_drops_bin_start_too(tmp_path):
             width.fill("")
             width.dispatch_event("change")
             mode = page.evaluate("() => document.querySelector('[data-bin-mode]').value")
+            start = page.locator('#qb-encoding input[data-spec="bin_start"]')
+            start_editable = start.count() > 0 and start.is_visible() and start.is_enabled()
             page.locator("#qb-add").click()
             deadline = time.monotonic() + 10
             while not saves:
@@ -259,5 +268,6 @@ def test_clearing_the_width_in_the_builder_drops_bin_start_too(tmp_path):
         server.should_exit = True
         thread.join(timeout=10)
     assert mode == "auto"
+    assert not start_editable
     assert saves == [200], saves
     assert "    chart: {type: histogram, x: v}\n" in (tmp_path / "h.yaml").read_text()
