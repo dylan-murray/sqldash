@@ -518,19 +518,95 @@ def _reference(raw: Any) -> ReferenceLine | None:
 def _write_references(seq: CommentedSeq, incoming: list[Any]) -> None:
     """Edit an authored `references:` list item by item: a reference that still
     means the same thing keeps its node (and its style, a `2026-09-01` date
-    staying unquoted), a removed one goes, and a new or changed one is written
-    as a flow mapping in its place."""
-    existing = [(_reference(item), item) for item in seq]
-    kept: list[Any] = []
-    for value in incoming:
-        wanted = _reference(value)
-        match = next(
-            (i for i, (ref, _) in enumerate(existing) if ref is not None and ref == wanted),
-            None,
-        )
-        kept.append(existing.pop(match)[1] if match is not None else _flow(value))
-    if kept != list(seq) or len(kept) != len(seq):
-        seq[:] = kept
+    staying unquoted), a changed one is edited key by key in the node at its
+    position, a removed one goes, and a new one is written as a flow mapping.
+    Comments stay with the references they sit against."""
+    refs = [_reference(item) for item in seq]
+    free = set(range(len(seq)))
+    wanted = [_reference(value) for value in incoming]
+    kept: list[Any] = [None] * len(incoming)
+    for j, ref in enumerate(wanted):
+        match = next((i for i in sorted(free) if ref is not None and refs[i] == ref), None)
+        if match is not None:
+            free.discard(match)
+            kept[j] = seq[match]
+    for j, value in enumerate(incoming):
+        if kept[j] is not None:
+            continue
+        if j in free and refs[j] is not None and wanted[j] is not None:
+            free.discard(j)
+            _edit_reference(seq[j], refs[j], wanted[j], value)
+            kept[j] = seq[j]
+        else:
+            kept[j] = _flow(value)
+    for index in sorted(free, reverse=True):
+        _carry_own_lines(seq, index)
+    _rearrange(seq, kept)
+
+
+def _edit_reference(node: CommentedMap, old: ReferenceLine, new: ReferenceLine, raw: Any) -> None:
+    before = old.model_dump(exclude_none=True)
+    after = new.model_dump(exclude_none=True)
+    for key, value in after.items():
+        if before.get(key) != value:
+            node[key] = _flow(raw[key])
+    for key in [k for k in node if k not in after]:
+        del node[key]
+
+
+def _carry_own_lines(seq: CommentedSeq, index: int) -> None:
+    """Before item ``index`` goes, hand the comment lines below it (not its own
+    end-of-line comment) to the item above, or to the head of the list, so the
+    note that sat over the next item still does."""
+    entry = seq.ca.items.get(index)
+    raw = entry[0].value.split("\n")[1:] if entry and entry[0] is not None else []
+    column = next((len(line) - len(line.lstrip()) for line in raw if line.strip()), 0)
+    comment = _detach_after(seq, index, 0, seq[index])
+    if comment is None:
+        return
+    comment = _Comment(comment.lines, column)
+    if index > 0:
+        _attach_after(seq, index - 1, 0, seq[index - 1], comment)
+        return
+    token = _fresh_line_token(comment)
+    head = seq.ca.comment
+    if head and len(head) > 1 and head[1]:
+        head[1].append(token)
+    else:
+        seq.ca.comment = [None, [token]]
+
+
+def _rearrange(seq: CommentedSeq, wanted: list[Any]) -> None:
+    """Make ``seq`` hold ``wanted`` in order by popping and inserting, never by
+    slice assignment, which wipes the positional comment table where a comment
+    or blank line *between* items lives. Each entry is keyed by index, so it is
+    carried with the node it sits against and re-keyed by the new positions.
+
+    A comment that lands at index 0 stops travelling: YAML has no way to say
+    "this comment belongs to the first item" rather than "to the block", so
+    ruamel reads it back as the sequence's own head comment. It stays at the
+    top: never lost, but no longer moving with its item."""
+    if [id(n) for n in seq] == [id(n) for n in wanted]:
+        return
+    carried = {
+        id(node): seq.ca.items[index] for index, node in enumerate(seq) if index in seq.ca.items
+    }
+    keep = {id(n) for n in wanted}
+    for index in range(len(seq) - 1, -1, -1):
+        if id(seq[index]) not in keep:
+            seq.pop(index)
+    for index, node in enumerate(wanted):
+        if index < len(seq) and seq[index] is node:
+            continue
+        for later in range(index, len(seq)):
+            if seq[later] is node:
+                seq.pop(later)
+                break
+        seq.insert(index, node)
+    seq.ca.items.clear()
+    for index, node in enumerate(seq):
+        if id(node) in carried:
+            seq.ca.items[index] = carried[id(node)]
 
 
 def _slim_metric(metric: dict[str, Any]) -> dict[str, Any]:
@@ -1410,46 +1486,7 @@ class DashboardStore(Store):
                     del node[key]
                 rendered.append(node)
             if isinstance(existing, list):
-                # Not `existing[:] = rendered`: slice assignment wipes the
-                # sequence's positional comment table, which is where a comment
-                # or blank line *between* filters lives — so every save, even a
-                # no-op one, silently deleted them. Pops and inserts keep it,
-                # and an unchanged order touches the list at all.
-                if [id(n) for n in existing] != [id(n) for n in rendered]:
-                    # A comment or blank line between filters is keyed by
-                    # sequence *index*, so popping a node to move it deletes the
-                    # entry outright. Carry each one with the node it sits
-                    # against and re-key by the new positions.
-                    #
-                    # A comment that lands at index 0 stops travelling: YAML has
-                    # no way to say "this comment belongs to the first item"
-                    # rather than "to the block", so ruamel reads it back as the
-                    # sequence's own head comment and it is no longer in the
-                    # table this reads. Attaching it to the node instead does not
-                    # survive the round trip either — it reloads as the head
-                    # comment just the same. So it stays at the top: never lost,
-                    # but no longer moving with its filter.
-                    carried = {
-                        id(node): existing.ca.items[index]
-                        for index, node in enumerate(existing)
-                        if index in existing.ca.items
-                    }
-                    keep = {id(n) for n in rendered}
-                    for index in range(len(existing) - 1, -1, -1):
-                        if id(existing[index]) not in keep:
-                            existing.pop(index)
-                    for index, node in enumerate(rendered):
-                        if index < len(existing) and existing[index] is node:
-                            continue
-                        for later in range(index, len(existing)):
-                            if existing[later] is node:
-                                existing.pop(later)
-                                break
-                        existing.insert(index, node)
-                    existing.ca.items.clear()
-                    for index, node in enumerate(existing):
-                        if id(node) in carried:
-                            existing.ca.items[index] = carried[id(node)]
+                _rearrange(existing, rendered)
             else:
                 keys = list(doc.keys())
                 anchor = next(

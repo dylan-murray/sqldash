@@ -2529,3 +2529,46 @@ def test_references_on_a_new_chart_mapping_write_as_flow(tmp_path):
     dashboard, _, _ = DashboardStore(tmp_path).load("d")
     assert dashboard.tiles[0].chart.references[0].y == 5
     assert "references: [{y: 5, label: Target}]" in text, text
+
+
+COMMENTED_REFERENCES = (
+    "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+    'queries: {q: "SELECT 1 AS a, 2 AS b"}\n'
+    "tiles:\n"
+    "  - title: A\n"
+    "    query: q\n"
+    "    chart:\n"
+    "      type: bar\n"
+    "      references:\n"
+    "        - {y: 10}  # quarterly goal\n"
+    "        # the stretch target\n"
+    "        - {y: 15}  # stretch\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("references", "expected"),
+    [
+        (
+            [{"y": 10}, {"y": 15}, {"y": 20}],
+            COMMENTED_REFERENCES + "        - {y: 20}\n",
+        ),
+        (
+            [{"y": 10}],
+            COMMENTED_REFERENCES.replace("        - {y: 15}  # stretch\n", ""),
+        ),
+        (
+            [{"y": 15}],
+            COMMENTED_REFERENCES.replace("        - {y: 10}  # quarterly goal\n", ""),
+        ),
+        (
+            [{"y": 12}, {"y": 15}],
+            COMMENTED_REFERENCES.replace("{y: 10}", "{y: 12}"),
+        ),
+    ],
+    ids=["append", "remove-last", "remove-first", "edit-in-place"],
+)
+def test_editing_references_keeps_the_comments_around_them(tmp_path, references, expected):
+    (tmp_path / "d.yaml").write_text(COMMENTED_REFERENCES)
+    text = _save_chart(tmp_path, {"type": "bar", "references": references})
+    assert text == expected, text
