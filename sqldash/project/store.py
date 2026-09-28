@@ -10,6 +10,7 @@ import stat
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
+from copy import deepcopy
 from datetime import date
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -486,6 +487,56 @@ def _same_chart_value(key: str, written: Any, incoming: Any) -> bool:
     return written == incoming
 
 
+def _shares_yaml(node: Any, seen: set[int] | None = None) -> bool:
+    """Whether a subtree holds an anchor, an alias or a `<<` merge key, any of
+    which makes an in-place edit reach past the tile being saved."""
+    seen = set() if seen is None else seen
+    anchor = getattr(node, "anchor", None)
+    if anchor is not None and getattr(anchor, "value", None) is not None:
+        return True
+    if not isinstance(node, (CommentedMap, CommentedSeq)):
+        return False
+    if id(node) in seen or (isinstance(node, CommentedMap) and node.merge):
+        return True
+    seen.add(id(node))
+    children = node.values() if isinstance(node, CommentedMap) else node
+    return any(_shares_yaml(child, seen) for child in children)
+
+
+def _plain_scalar(value: Any) -> Any:
+    anchor = getattr(value, "anchor", None)
+    if anchor is None or getattr(anchor, "value", None) is None:
+        return value
+    for kind in (bool, int, float, str):
+        if isinstance(value, kind):
+            return kind(value)
+    return value
+
+
+def _materialized(node: Any) -> Any:
+    """A fully resolved, unshared copy of a subtree: every alias expanded into
+    its own nodes, every `<<` merge written out as the keys it contributed,
+    no anchors left, and each mapping and sequence keeping its flow or block
+    style and its own comments. Editing the copy touches nothing else."""
+    if isinstance(node, CommentedMap):
+        out = CommentedMap()
+        for key, value in node.items():
+            out[key] = _materialized(value)
+        out.ca.items.update({k: deepcopy(v) for k, v in node.ca.items.items() if k in out})
+    elif isinstance(node, CommentedSeq):
+        out = CommentedSeq(_materialized(value) for value in node)
+        out.ca.items.update(deepcopy(node.ca.items))
+    else:
+        return _plain_scalar(node)
+    out.ca.comment = deepcopy(node.ca.comment)
+    out.ca.end = deepcopy(node.ca.end)
+    if node.fa.flow_style():
+        out.fa.set_flow_style()
+    else:
+        out.fa.set_block_style()
+    return out
+
+
 def _write_chart(existing: CommentedMap, slim: dict[str, Any]) -> None:
     """Write a changed chart in the tersest form that still says it: `chart: bar`
     when only the type is set, otherwise key-by-key into the mapping the author
@@ -497,6 +548,8 @@ def _write_chart(existing: CommentedMap, slim: dict[str, Any]) -> None:
     if not isinstance(node, CommentedMap):
         _put_key(existing, "chart", _flow(slim))
         return
+    if _shares_yaml(node):
+        node = existing["chart"] = _materialized(node)
     for key, value in slim.items():
         if key == "references" and isinstance(node.get(key), CommentedSeq):
             _write_references(node[key], value)
@@ -557,16 +610,26 @@ def _edit_reference(node: CommentedMap, old: ReferenceLine, new: ReferenceLine, 
 def _carry_own_lines(seq: CommentedSeq, index: int) -> None:
     """Before item ``index`` goes, hand the comment lines below it (not its own
     end-of-line comment) to the item above, or to the head of the list, so the
-    note that sat over the next item still does."""
-    entry = seq.ca.items.get(index)
-    raw = entry[0].value.split("\n")[1:] if entry and entry[0] is not None else []
-    column = next((len(line) - len(line.lstrip()) for line in raw if line.strip()), 0)
-    comment = _detach_after(seq, index, 0, seq[index])
+    note that sat over the next item still does. ruamel keeps those lines on
+    the sequence for a flow item and on the item's deepest last key for a
+    block one."""
+    node = seq[index]
+    if _is_block_collection(node):
+        comment = _take_trailing(node)
+    else:
+        entry = seq.ca.items.get(index)
+        raw = entry[0].value.split("\n")[1:] if entry and entry[0] is not None else []
+        column = next((len(line) - len(line.lstrip()) for line in raw if line.strip()), 0)
+        comment = _detach_after(seq, index, 0, node)
+        comment = _Comment(comment.lines, column) if comment else None
     if comment is None:
         return
-    comment = _Comment(comment.lines, column)
     if index > 0:
-        _attach_after(seq, index - 1, 0, seq[index - 1], comment)
+        above = seq[index - 1]
+        if _is_block_collection(above):
+            _give_trailing(above, comment)
+        else:
+            _attach_after(seq, index - 1, 0, above, comment)
         return
     token = _fresh_line_token(comment)
     head = seq.ca.comment

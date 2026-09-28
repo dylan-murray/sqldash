@@ -2572,3 +2572,133 @@ def test_editing_references_keeps_the_comments_around_them(tmp_path, references,
     (tmp_path / "d.yaml").write_text(COMMENTED_REFERENCES)
     text = _save_chart(tmp_path, {"type": "bar", "references": references})
     assert text == expected, text
+
+
+def _save_refs(tmp_path, tile_id, references):
+    store = DashboardStore(tmp_path)
+    _, _, etag = store.load("d")
+    store.upsert_tile(
+        "d",
+        {
+            "id": tile_id,
+            "title": tile_id.upper(),
+            "query": "q",
+            "chart": {"type": "bar", "references": references},
+        },
+        sql=None,
+        if_match=etag,
+    )
+    dashboard, _, _ = store.load("d")
+    refs = {
+        t.id: [r.model_dump(exclude_none=True) for r in t.chart.references] for t in dashboard.tiles
+    }
+    return (tmp_path / "d.yaml").read_text(), refs
+
+
+def _ref_tiles(a_refs: str, b_refs: str) -> str:
+    return (
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        'queries: {q: "SELECT 1 AS a, 2 AS b"}\n'
+        "tiles:\n"
+        "  - title: A\n    query: q\n    chart:\n      type: bar\n      references:\n"
+        + a_refs
+        + "  - title: B\n    query: q\n    chart:\n      type: bar\n      references:\n"
+        + b_refs
+    )
+
+
+SHARED_REFERENCE = _ref_tiles("        - &goal {y: 10, label: Goal}\n", "        - *goal\n")
+
+
+@pytest.mark.parametrize("edited", ["a", "b"])
+def test_editing_a_shared_reference_leaves_the_other_tile_alone(tmp_path, edited):
+    (tmp_path / "d.yaml").write_text(SHARED_REFERENCE)
+    text, refs = _save_refs(tmp_path, edited, [{"y": 20, "label": "Goal"}])
+    other = "b" if edited == "a" else "a"
+    assert refs[edited] == [{"y": 20, "label": "Goal"}], text
+    assert refs[other] == [{"y": 10, "label": "Goal"}], text
+
+
+def test_nested_aliases_in_references_are_expanded_before_an_edit(tmp_path):
+    (tmp_path / "d.yaml").write_text(
+        _ref_tiles(
+            "        - {y: 10, label: &name Goal}\n        - {y: 20, label: *name}\n",
+            "        - {y: 5}\n",
+        )
+    )
+    text, refs = _save_refs(
+        tmp_path, "a", [{"y": 10, "label": "Goal"}, {"y": 20, "label": "Stretch"}]
+    )
+    assert refs["a"] == [{"y": 10, "label": "Goal"}, {"y": 20, "label": "Stretch"}], text
+    assert "&" not in text, text
+    assert "*" not in text, text
+
+
+MERGED_REFERENCE = _ref_tiles(
+    "        - &target {y: 10, color: good, style: solid}\n        - {<<: *target, y: 20}\n",
+    "        - *target\n",
+)
+
+
+def test_overriding_a_merged_reference_key_writes_the_override(tmp_path):
+    (tmp_path / "d.yaml").write_text(MERGED_REFERENCE)
+    text, refs = _save_refs(
+        tmp_path,
+        "a",
+        [
+            {"y": 10, "color": "good", "style": "solid"},
+            {"y": 20, "color": "bad", "style": "solid"},
+        ],
+    )
+    assert refs["a"][1] == {"y": 20, "color": "bad", "style": "solid"}, text
+    assert refs["b"] == [{"y": 10, "color": "good", "style": "solid"}], text
+    assert "<<" not in text.split("  - title: B")[0], text
+
+
+def test_deleting_a_merged_reference_key_takes_it_off(tmp_path):
+    (tmp_path / "d.yaml").write_text(MERGED_REFERENCE)
+    text, refs = _save_refs(
+        tmp_path, "a", [{"y": 10, "color": "good", "style": "solid"}, {"y": 20, "color": "good"}]
+    )
+    assert refs["a"][1] == {"y": 20, "color": "good"}, text
+    assert refs["b"] == [{"y": 10, "color": "good", "style": "solid"}], text
+
+
+@pytest.mark.parametrize("doc", [SHARED_REFERENCE, MERGED_REFERENCE], ids=["alias", "merge"])
+def test_an_unchanged_save_of_shared_references_is_byte_identical(tmp_path, doc):
+    (tmp_path / "d.yaml").write_text(doc)
+    dashboard, _, _ = DashboardStore(tmp_path).load("d")
+    references = [r.model_dump(exclude_none=True) for r in dashboard.tiles[0].chart.references]
+    text, _ = _save_refs(tmp_path, "a", references)
+    assert text == doc, text
+
+
+BLOCK_REFERENCES = _ref_tiles(
+    "        - y: 10\n"
+    "        # keep this for 20\n"
+    "        - y: 20\n"
+    "          label: Twenty\n"
+    "        # keep this for 30\n"
+    "        - y: 30\n",
+    "        - {y: 5}\n",
+)
+
+
+@pytest.mark.parametrize(
+    ("references", "expected"),
+    [
+        (
+            [{"y": 20, "label": "Twenty"}, {"y": 30}],
+            BLOCK_REFERENCES.replace("        - y: 10\n", "", 1),
+        ),
+        (
+            [{"y": 10}, {"y": 30}],
+            BLOCK_REFERENCES.replace("        - y: 20\n          label: Twenty\n", "", 1),
+        ),
+    ],
+    ids=["remove-first", "remove-middle"],
+)
+def test_removing_a_block_reference_keeps_the_comment_over_the_next(tmp_path, references, expected):
+    (tmp_path / "d.yaml").write_text(BLOCK_REFERENCES)
+    text, _ = _save_refs(tmp_path, "a", references)
+    assert text == expected, text
