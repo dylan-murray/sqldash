@@ -172,3 +172,14 @@ def test_rewriting_a_cross_filter_changes_only_its_own_lines(tmp_path, old, new,
     tile = {"id": "by_region", "title": "By region", "chart": "table", "query": "by_region"}
     store.upsert_tile("overview", {**tile, "cross_filter": value}, None, store.load("overview")[2])
     assert (tmp_path / "overview.yaml").read_text() == _mapping_file(lines, where)
+
+
+@pytest.mark.parametrize("mapping", ["{region: region}", "false"])
+def test_turning_a_cross_filter_tile_into_text_drops_its_mapping(tmp_path, mapping):
+    (tmp_path / "overview.yaml").write_text(_dashboard(mapping))
+    store = DashboardStore(tmp_path)
+    tile = {"id": "by_region", "type": "text", "title": "By region", "markdown": "Notes"}
+    store.upsert_tile("overview", tile, None, store.load("overview")[2])
+    saved = store.load("overview")[0].tiles[0]
+    assert saved.type == "text"
+    assert saved.cross_filter is None

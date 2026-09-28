@@ -401,6 +401,20 @@ tiles:
     cross_filter: {rate: rate}
     sql: "SELECT 1::DOUBLE AS rate, 1 AS n"
 """,
+    "slowrates": """title: Slow rates
+source: {type: duckdb, attach_files: true}
+filters:
+  - name: rate
+    type: select
+    options_sql: >-
+      SELECT CAST(x AS DECIMAL(2,1)) FROM (VALUES (1.0), (2.0)) t(x)
+      WHERE (SELECT sum(i % 7) FROM range(400000000) r(i)) > 0 ORDER BY 1
+tiles:
+  - title: Rates
+    chart: table
+    cross_filter: {rate: rate}
+    sql: "SELECT 1::DOUBLE AS rate, 1 AS n"
+""",
     "dest_a": "title: Dest A\nsource: {type: duckdb, attach_files: true}\n"
     "filters:\n  - {name: k, type: text}\ntiles:\n  - {title: A, sql: 'SELECT 1 AS n'}\n",
     "dest_b": "title: Dest B\nsource: {type: duckdb, attach_files: true}\n"
@@ -859,4 +873,16 @@ def test_a_float_cell_sets_the_matching_option_an_options_sql_query_returned(pag
     _xf_tile(page, "rates").locator("button.cell-filter").click()
     page.wait_for_function("() => location.search.includes('f_rate=1.0')")
     assert page.eval_on_selector('select[data-filter="rate"]', "e => e.value") == "1.0"
+    assert page.locator(".toast-error").count() == 0
+
+
+def test_a_cross_filter_click_sees_options_that_loaded_after_the_tile(page, edges):
+    page.goto(f"{edges}/d/slowrates")
+    _xf_tile(page, "rates").locator("button.cell-filter").wait_for()
+    assert page.eval_on_selector_all('select[data-filter="rate"] option', "o => o.length") == 1
+    page.wait_for_function(
+        "() => document.querySelectorAll('select[data-filter=\"rate\"] option').length === 3"
+    )
+    _xf_tile(page, "rates").locator("button.cell-filter").click()
+    page.wait_for_function("() => location.search.includes('f_rate=1.0')")
     assert page.locator(".toast-error").count() == 0

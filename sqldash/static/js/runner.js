@@ -501,8 +501,13 @@ export function markTileClicks() {
 function crossPlan(tile) {
   const plan = crossFilterPlan(tile, dashboard.filters);
   for (const entry of plan?.entries ?? []) {
-    const input = filterInput(entry.name);
-    if (input?.tagName === "SELECT") entry.options = selectOptions(input);
+    const fallback = entry.options;
+    Object.defineProperty(entry, "options", {
+      get() {
+        const input = filterInput(entry.name);
+        return input?.tagName === "SELECT" ? selectOptions(input) : fallback;
+      },
+    });
   }
   return plan;
 }
@@ -997,8 +1002,15 @@ function refuseUrlValue(bind, value) {
   toast(`${label} has no '${value}' to filter to, so it is showing its default`, "error");
 }
 
+const optionLists = new WeakMap();
+
 function selectOptions(select) {
-  return [...select.options].map((o) => ({ value: o.value, kind: o.dataset.kind || "string" }));
+  const cached = optionLists.get(select);
+  const last = select.options[select.options.length - 1]?.value;
+  if (cached && cached.length === select.options.length && cached.last === last) return cached.list;
+  const list = [...select.options].map((o) => ({ value: o.value, kind: o.dataset.kind || "string" }));
+  optionLists.set(select, { length: select.options.length, last, list });
+  return list;
 }
 
 function selectValue(select, value) {
