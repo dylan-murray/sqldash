@@ -5,6 +5,7 @@ import {
   markEmptyChart,
   markTruncated,
   own,
+  promoteRightAxis,
   pruneSpecForType,
   referenceKind,
   renderBigNumber,
@@ -356,6 +357,7 @@ export class ChartBuilder {
         this._spec.y = [...this.encodingEl.querySelectorAll("[data-spec-y]:checked")].map(
           (b) => b.value
         );
+        this.promoteAxes();
         this.renderEncodings();
         this.renderPreview();
         this.onChange();
@@ -525,7 +527,17 @@ export class ChartBuilder {
     }
   }
 
+  /* The editable state itself moves to the left axis, not just what the
+     builder saves, so the Series controls show the chart that will be saved
+     and the next edit starts from it. */
+  promoteAxes() {
+    const promoted = promoteRightAxis(this._spec);
+    if (promoted) Object.assign(this._spec, promoted);
+    return Boolean(promoted);
+  }
+
   seriesChanged({ rerender = false } = {}) {
+    if (this.promoteAxes()) rerender = true;
     if (rerender) this.renderEncodings();
     this.renderPreview();
     this.onChange();

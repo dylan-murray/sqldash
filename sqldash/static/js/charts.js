@@ -1040,11 +1040,31 @@ function addReferences(option, spec, result, { horizontal, isTemporal, yFormat, 
   }
 }
 
+/* A chart whose every y column is on the right has no left axis, so it is a
+   one-axis chart: the columns move to the left and take the right axis's
+   title, bounds and format with them. Returns the series and axes to use,
+   or null when there is nothing to move. */
+export function promoteRightAxis(spec) {
+  const ys = spec.y ?? [];
+  if (!ys.length || !ys.every((column) => own(spec.series, column)?.axis === "right")) return null;
+  const series = Object.create(null);
+  for (const [column, entry] of Object.entries(spec.series ?? {})) {
+    if (entry && ys.includes(column)) {
+      series[column] = { ...entry };
+      delete series[column].axis;
+    } else {
+      series[column] = entry;
+    }
+  }
+  return { series, axes: spec.axes?.right ? { left: spec.axes.right } : {} };
+}
+
 export function cleanCombo(spec) {
   const out = {};
   const ys = new Set(spec.y ?? []);
   const blocked = Boolean(spec.group_by) || spec.orientation === "horizontal";
   if (!["line", "bar", "area"].includes(spec.type) || blocked) return out;
+  spec = { ...spec, ...promoteRightAxis(spec) };
   const series = Object.create(null);
   for (const [column, entry] of Object.entries(spec.series ?? {})) {
     if (!entry || (ys.size && !ys.has(column))) continue;
@@ -1054,19 +1074,12 @@ export function cleanCombo(spec) {
     if (entry.label) next.label = entry.label;
     if (Object.keys(next).length) series[column] = next;
   }
-  const promoted = ys.size > 0 && [...ys].every((column) => series[column]?.axis === "right");
-  if (promoted) {
-    for (const column of ys) {
-      delete series[column].axis;
-      if (!Object.keys(series[column]).length) delete series[column];
-    }
-  }
   if (Object.keys(series).length) out.series = Object.fromEntries(Object.entries(series));
   const onRight = Object.values(series).some((entry) => entry.axis === "right");
   const axes = {};
   for (const side of ["left", "right"]) {
     if (side === "right" && !onRight) continue;
-    const entry = spec.axes?.[promoted ? "right" : side];
+    const entry = spec.axes?.[side];
     if (!entry) continue;
     const next = {};
     if (entry.title) next.title = entry.title;

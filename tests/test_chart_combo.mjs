@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   cleanCombo,
   formatValue,
+  promoteRightAxis,
   pruneSpecForType,
   setFormatConfig,
   translate,
@@ -212,4 +213,18 @@ test("a column called __proto__ keeps its series settings and format", () => {
     ["line", 1, "Rate"],
   ]);
   assert.equal(option.series[1].tooltip.valueFormatter(0.25), "25%");
+});
+
+test("promoting leaves nothing on the right and hands the left axis the right one's settings", () => {
+  const spec = {
+    y: ["rate", "margin"],
+    series: { rate: { type: "line", axis: "right" }, margin: { axis: "right" }, revenue: { label: "R" } },
+    axes: { left: { title: "Revenue", min: 10000 }, right: { title: "Rate", min: 0, max: 1 } },
+  };
+  const promoted = promoteRightAxis(spec);
+  assert.deepEqual(JSON.parse(JSON.stringify(promoted)), {
+    series: { rate: { type: "line" }, margin: {}, revenue: { label: "R" } },
+    axes: { left: { title: "Rate", min: 0, max: 1 } },
+  });
+  assert.equal(promoteRightAxis({ ...spec, y: ["revenue", "rate"] }), null);
 });
