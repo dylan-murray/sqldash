@@ -1786,19 +1786,24 @@ def _metric_tile_query_already_linted(tile, definition) -> bool:
 def _dry_run_metric_tiles(
     registry, layer, dashboard, base_dir, repo: str | None = None
 ) -> tuple[list[str], dict[str, set[str]]]:
-    """Compile and probe every project-metric tile. Returns the errors and the
-    column names each probe came back with, keyed by tile id."""
+    """Compile and probe every metric tile. Returns the errors and the column names
+    each probe came back with, keyed by tile id. A dashboard-local metric is only
+    probed for its columns: `_dry_run_metrics` already reports its failures."""
     available, ambiguous = _metric_catalog(layer, repo)
     errors: list[str] = []
     columns: dict[str, set[str]] = {}
     probed: dict[tuple, set[str] | None] = {}
     shapes: set[tuple] = set()
     for tile in dashboard.tiles:
-        if not tile.metric or tile.metric.name in dashboard.metrics:
+        if not tile.metric:
             continue
-        if tile.metric.name in ambiguous:
+        inline = tile.metric.name in dashboard.metrics
+        if inline:
+            resolved = _inline_dashboard_resolved(dashboard, tile.metric.name, base_dir)
+        elif tile.metric.name in ambiguous:
             continue
-        resolved = available.get(tile.metric.name)
+        else:
+            resolved = available.get(tile.metric.name)
         if resolved is None:
             continue
         key = (tile.metric.name, tuple(tile.metric.dimensions), tile.metric.grain)
@@ -1815,7 +1820,7 @@ def _dry_run_metric_tiles(
                 limit=1,
             )
         except (SemanticError, ValueError) as exc:
-            if not _metric_tile_query_already_linted(tile, resolved.definition):
+            if not inline and not _metric_tile_query_already_linted(tile, resolved.definition):
                 errors.append(f"tile '{tile.id}': metric does not compile — {exc}")
             continue
         shapes.add((tile.metric.name, bound.sql, repr([])))
@@ -1831,10 +1836,11 @@ def _dry_run_metric_tiles(
                         CancelToken(),
                     )
                 except Exception as exc:
-                    errors.append(
-                        f"tile '{tile.id}': SQL fails against the source — "
-                        f"{str(exc).splitlines()[0]}"
-                    )
+                    if not inline:
+                        errors.append(
+                            f"tile '{tile.id}': SQL fails against the source — "
+                            f"{str(exc).splitlines()[0]}"
+                        )
                     continue
         except Exception:
             continue
@@ -1888,6 +1894,17 @@ def _dry_run_reference_metrics(
                 )
             )
     return errors
+
+
+def _inline_dashboard_resolved(dashboard, name: str, base_dir) -> ResolvedMetric | None:
+    """A dashboard-local metric resolved for a probe, or None when it does not
+    resolve: `_dry_run_metrics` already reports why."""
+    try:
+        return _inline_resolved(
+            name, dashboard.metrics, dashboard.relations, dashboard.source, base_dir
+        )
+    except (SemanticError, KeyError, ValueError):
+        return None
 
 
 def _render_all_conditionals(sql: str) -> str | None:

@@ -242,6 +242,24 @@ tiles:
     sql: "SELECT 'y' AS k, {{ n }} AS n"
     drill: {dashboard: dest_b, filters: {k: k}}
 """,
+    "stale": """title: Stale
+source: {type: duckdb, attach_files: true}
+filters:
+  - {name: region, type: select, options: [all, us, eu, apac], default: us}
+tiles:
+  - title: Keys
+    chart: table
+    sql: "SELECT 'x' AS k, 1 AS n"
+    drill: {dashboard: stale_dest, filters: {k: k, region: {filter: region}}}
+""",
+    "stale_dest": """title: Stale dest
+source: {type: duckdb, attach_files: true}
+filters:
+  - {name: k, type: text}
+  - {name: region, type: select, options: [all, us, eu]}
+tiles:
+  - {title: Rows, sql: "SELECT 1 AS n"}
+""",
     "dest_a": "title: Dest A\nsource: {type: duckdb, attach_files: true}\n"
     "filters:\n  - {name: k, type: text}\ntiles:\n  - {title: A, sql: 'SELECT 1 AS n'}\n",
     "dest_b": "title: Dest B\nsource: {type: duckdb, attach_files: true}\n"
@@ -317,3 +335,18 @@ def test_deleting_a_tile_leaves_the_survivor_its_own_id_and_drill(page, edges):
     link = page.locator(".tile a.cell-link").first
     assert link.text_content() == "y"
     assert urlparse(link.get_attribute("href")).path == "/d/dest_b"
+
+
+def test_a_table_link_the_current_filters_make_invalid_does_not_open_its_old_href(page, edges):
+    page.goto(f"{edges}/d/stale")
+    _wait_tiles(page)
+    link = page.locator('.tile[data-tile-id="keys"] a.cell-link').first
+    assert parse_qs(urlparse(link.get_attribute("href")).query)["f_region"] == ["us"]
+    page.select_option('select[data-filter="region"]', "apac")
+    page.wait_for_function("() => location.search.includes('f_region=apac')")
+    link.hover()
+    link.click()
+    page.wait_for_selector(".toast-error")
+    assert "'apac' is not one of the options" in page.locator(".toast-error").first.text_content()
+    page.wait_for_timeout(300)
+    assert "/d/stale" in page.url

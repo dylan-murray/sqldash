@@ -1,7 +1,26 @@
 import { escapeHtml, inferSpec } from "./charts.js";
 
 const NUMBER_TEXT = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
-const ISO_DAY = /^\d{4}-\d{2}-\d{2}/;
+const INPUT_NUMBER = /^-?(\d+(\.\d+)?|\.\d+)([eE][+-]?\d+)?$/;
+const ISO_DAY = /^(\d{4})-(\d{2})-(\d{2})/;
+
+function numberText(text) {
+  if (INPUT_NUMBER.test(text)) return text;
+  return text.replace(/^\+/, "").replace(/\.(?=[eE]|$)/, "");
+}
+
+function calendarDay(text) {
+  const match = ISO_DAY.exec(text);
+  if (!match) return null;
+  const [day, year, month, date] = match;
+  const at = new Date(0);
+  at.setUTCFullYear(Number(year), Number(month) - 1, Number(date));
+  const same =
+    at.getUTCFullYear() === Number(year) &&
+    at.getUTCMonth() === Number(month) - 1 &&
+    at.getUTCDate() === Number(date);
+  return same ? day : null;
+}
 
 export function rowForPoint(spec, result, point) {
   const rows = result.rows ?? [];
@@ -33,11 +52,11 @@ function valueText(value, type, column) {
     return { error: `${column} is '${text}', which is not a number` };
   }
   if (type === "date") {
-    const day = ISO_DAY.exec(text)?.[0];
+    const day = calendarDay(text);
     if (!day) return { error: `${column} is '${text}', which is not a date` };
     return { text: day };
   }
-  return { text: type === "number" ? text.trim() : text };
+  return { text: type === "number" ? numberText(text.trim()) : text };
 }
 
 export function drillUrl(plan, row, columns, context) {
@@ -117,8 +136,10 @@ export function tableDrillCells(plan, result, context, notify) {
     link.className = "cell-link";
     link.href = href;
     const refresh = () => {
-      const next = drillUrl(plan, row, result.columns, context()).href;
-      if (next) link.href = next;
+      const next = drillUrl(plan, row, result.columns, context());
+      if (next.href) link.href = next.href;
+      td.title = next.href ? `Open ${plan.title}` : next.error;
+      return next;
     };
     for (const type of ["pointerenter", "pointerdown", "focus"]) link.addEventListener(type, refresh);
     if (plan.new_tab) {
@@ -126,7 +147,17 @@ export function tableDrillCells(plan, result, context, notify) {
       link.rel = "noopener";
     }
     link.append(...td.childNodes);
-    link.addEventListener("click", (e) => e.stopPropagation());
+    const guard = (e) => {
+      e.stopPropagation();
+      const { href, error } = refresh();
+      if (href) return;
+      e.preventDefault();
+      notify(error);
+    };
+    link.addEventListener("click", guard);
+    link.addEventListener("auxclick", (e) => {
+      if (e.button === 1) guard(e);
+    });
     link.addEventListener("keydown", (e) => e.stopPropagation());
     td.replaceChildren(link);
     td.classList.add("has-link");

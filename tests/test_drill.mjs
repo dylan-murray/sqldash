@@ -130,3 +130,22 @@ test("a carried filter value outside the destination's options is refused, not s
   assert.equal(new URL(at("eu").href, "http://x").searchParams.get("f_region"), "eu");
   assert.equal(new URL(at("").href, "http://x").searchParams.has("f_region"), false);
 });
+
+test("a number is sent the way a number input takes it, and a date must be on the calendar", () => {
+  const one = (type, value) =>
+    drillUrl(
+      plan([{ param: "v", type, column: "customer" }]),
+      [7, value, "us", null, 1],
+      result.columns,
+      context,
+    );
+  const sent = (type, value) => new URL(one(type, value).href, "http://x").searchParams.get("f_v");
+  assert.equal(sent("number", "+7"), "7");
+  assert.equal(sent("number", " 1. "), "1");
+  assert.equal(sent("number", "-0.5e3"), "-0.5e3");
+  assert.equal(sent("number", "12345678901234567890"), "12345678901234567890");
+  assert.match(one("number", "7a").error, /not a number/);
+  assert.equal(sent("date", "2024-02-29T00:00:00"), "2024-02-29");
+  assert.match(one("date", "2026-02-31").error, /not a date/);
+  assert.match(one("date", "2026-13-01").error, /not a date/);
+});

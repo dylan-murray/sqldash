@@ -234,6 +234,7 @@ def client(tmp_path):
     _project(tmp_path, overview=OVERVIEW, detail=DETAIL)
     app = create_app(tmp_path, allowed_hosts=["testserver"])
     with TestClient(app) as c:
+        c.headers["X-Sqldash-Token"] = app.state.api_token
         yield c
 
 
@@ -331,3 +332,74 @@ def test_validate_dashboard_reports_a_drill_column_a_metric_tile_does_not_return
     assert "tile 'by_region'" in missing[0]
     assert "'nonexistent'" in missing[0]
     assert "region, revenue" in missing[0]
+
+
+def test_validate_dashboard_reports_a_drill_column_an_inline_metric_tile_does_not_return(tmp_path):
+    store = _project(tmp_path, detail=DETAIL)
+    text = (
+        "title: Overview\n" + SOURCE + "relations:\n"
+        "  orders: {sql: \"SELECT 1 AS amount, 'us' AS region\"}\n"
+        "metrics:\n"
+        "  revenue: {relation: orders, expr: SUM(amount), dimensions: [{name: region}]}\n"
+        "tiles:\n"
+        "  - title: By region\n"
+        "    chart: bar\n"
+        "    metric: {name: revenue, dimensions: [region]}\n"
+        "    drill: {dashboard: detail, filters: {customer: nonexistent}}\n"
+    )
+    registry = ExecutionRegistry(max_workers=1)
+    try:
+        payload = validate_dashboard(
+            text, store=store, layer=SemanticLayer(store), registry=registry, name="overview"
+        )
+    finally:
+        registry.shutdown()
+    missing = [e for e in payload["errors"] if "drill reads column" in e]
+    assert len(missing) == 1, payload
+    assert "'nonexistent'" in missing[0]
+    assert "region, revenue" in missing[0]
+
+
+def _tile_write(client, method, path, tile):
+    etag = client.get("/api/dashboards/overview").json()["etag"]
+    res = client.request(method, path, json={"tile": tile}, headers={"If-Match": etag})
+    assert res.status_code == 200, res.text
+    return client.get("/api/dashboards/overview").json()["dashboard"]["tiles"]
+
+
+def test_the_tile_api_writes_a_new_drill_and_replaces_or_removes_one(client, tmp_path):
+    tiles = _tile_write(
+        client,
+        "POST",
+        "/api/dashboards/overview/tiles",
+        {
+            "title": "Linked",
+            "chart": "bar",
+            "query": "by_customer",
+            "drill": {"dashboard": "detail", "filters": {"customer": "customer"}},
+        },
+    )
+    linked = next(t for t in tiles if t["id"] == "linked")
+    assert linked["drill"]["filters"] == {"customer": "customer"}
+    tiles = _tile_write(
+        client,
+        "PUT",
+        "/api/dashboards/overview/tiles/linked",
+        {
+            "id": "linked",
+            "title": "Linked",
+            "chart": "bar",
+            "query": "by_customer",
+            "drill": "overview",
+        },
+    )
+    assert next(t for t in tiles if t["id"] == "linked")["drill"]["dashboard"] == "overview"
+    tiles = _tile_write(
+        client,
+        "PUT",
+        "/api/dashboards/overview/tiles/linked",
+        {"id": "linked", "title": "Linked", "chart": "bar", "query": "by_customer", "drill": None},
+    )
+    assert next(t for t in tiles if t["id"] == "linked")["drill"] is None
+    text = (tmp_path / "overview.yaml").read_text()
+    assert "    drill:\n      dashboard: detail\n" in text
