@@ -588,12 +588,14 @@ def _write_references(seq: CommentedSeq, incoming: list[Any]) -> None:
             continue
         if j in free and refs[j] is not None and wanted[j] is not None:
             free.discard(j)
+            below = _take_item_trailing(seq, j)
             _edit_reference(seq[j], refs[j], wanted[j], value)
+            _give_item_trailing(seq, j, below)
             kept[j] = seq[j]
         else:
             kept[j] = _flow(value)
     for index in sorted(free, reverse=True):
-        _carry_own_lines(seq, index)
+        _give_item_trailing(seq, index - 1, _take_item_trailing(seq, index))
     _rearrange(seq, kept)
 
 
@@ -604,32 +606,36 @@ def _edit_reference(node: CommentedMap, old: ReferenceLine, new: ReferenceLine, 
         if before.get(key) != value:
             node[key] = _flow(raw[key])
     for key in [k for k in node if k not in after]:
-        del node[key]
+        _delete_key(node, key)
 
 
-def _carry_own_lines(seq: CommentedSeq, index: int) -> None:
-    """Before item ``index`` goes, hand the comment lines below it (not its own
-    end-of-line comment) to the item above, or to the head of the list, so the
-    note that sat over the next item still does. ruamel keeps those lines on
-    the sequence for a flow item and on the item's deepest last key for a
-    block one."""
+def _take_item_trailing(seq: CommentedSeq, index: int) -> _Comment | None:
+    """Detach the comment lines below item ``index`` (not its own end-of-line
+    comment): the note over the next item. ruamel keeps them on the sequence
+    for a flow item and on the item's deepest last key for a block one, so
+    deleting that key or the item would take them along."""
     node = seq[index]
     if _is_block_collection(node):
-        comment = _take_trailing(node)
-    else:
-        entry = seq.ca.items.get(index)
-        raw = entry[0].value.split("\n")[1:] if entry and entry[0] is not None else []
-        column = next((len(line) - len(line.lstrip()) for line in raw if line.strip()), 0)
-        comment = _detach_after(seq, index, 0, node)
-        comment = _Comment(comment.lines, column) if comment else None
+        return _take_trailing(node)
+    entry = seq.ca.items.get(index)
+    raw = entry[0].value.split("\n")[1:] if entry and entry[0] is not None else []
+    column = next((len(line) - len(line.lstrip()) for line in raw if line.strip()), 0)
+    comment = _detach_after(seq, index, 0, node)
+    return _Comment(comment.lines, column) if comment else None
+
+
+def _give_item_trailing(seq: CommentedSeq, index: int, comment: _Comment | None) -> None:
+    """Put comment lines below item ``index``, or at the head of the list when
+    ``index`` is -1: where lines taken from an edited item go back, and where
+    a removed item's go, onto the item above it."""
     if comment is None:
         return
-    if index > 0:
-        above = seq[index - 1]
-        if _is_block_collection(above):
-            _give_trailing(above, comment)
+    if index >= 0:
+        node = seq[index]
+        if _is_block_collection(node):
+            _give_trailing(node, comment)
         else:
-            _attach_after(seq, index - 1, 0, above, comment)
+            _attach_after(seq, index, 0, node, comment)
         return
     token = _fresh_line_token(comment)
     head = seq.ca.comment

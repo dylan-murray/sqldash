@@ -2702,3 +2702,52 @@ def test_removing_a_block_reference_keeps_the_comment_over_the_next(tmp_path, re
     (tmp_path / "d.yaml").write_text(BLOCK_REFERENCES)
     text, _ = _save_refs(tmp_path, "a", references)
     assert text == expected, text
+
+
+LABELLED_BLOCK_REFERENCES = _ref_tiles(
+    "        - y: 10\n          label: Ten\n        # keep this for 20\n        - y: 20\n",
+    "        - {y: 5}\n",
+)
+
+
+@pytest.mark.parametrize(
+    ("references", "expected"),
+    [
+        (
+            [{"y": 10}, {"y": 20}],
+            LABELLED_BLOCK_REFERENCES.replace("          label: Ten\n", "", 1),
+        ),
+        (
+            [{"x": "a", "label": "Ten"}, {"y": 20}],
+            LABELLED_BLOCK_REFERENCES.replace(
+                "        - y: 10\n          label: Ten\n",
+                "        - label: Ten\n          x: a\n",
+                1,
+            ),
+        ),
+        (
+            [{"y": 12, "label": "Ten"}, {"y": 20}],
+            LABELLED_BLOCK_REFERENCES.replace("        - y: 10\n", "        - y: 12\n", 1),
+        ),
+    ],
+    ids=["drop-label", "y-to-x", "change-value"],
+)
+def test_editing_a_block_reference_keeps_the_comment_over_the_next(tmp_path, references, expected):
+    (tmp_path / "d.yaml").write_text(LABELLED_BLOCK_REFERENCES)
+    text, _ = _save_refs(tmp_path, "a", references)
+    assert text == expected, text
+
+
+def test_a_comment_under_a_deleted_key_moves_to_the_key_above(tmp_path):
+    doc = _ref_tiles(
+        "        - y: 10\n"
+        "          label: Ten\n"
+        "          # the goal colour\n"
+        "          color: good\n"
+        "        - y: 20\n",
+        "        - {y: 5}\n",
+    )
+    (tmp_path / "d.yaml").write_text(doc)
+    text, _ = _save_refs(tmp_path, "a", [{"y": 10, "label": "Ten"}, {"y": 20}])
+    assert "# the goal colour" in text, text
+    assert "color: good" not in text, text
