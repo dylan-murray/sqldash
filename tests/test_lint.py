@@ -2237,6 +2237,8 @@ def test_combo_series_and_axes_validate_their_shape():
         ({"series": {"rate": {"color": "red"}}}, "Extra inputs"),
         ({"axes": {"top": {}}}, "'left' or 'right'"),
         ({"axes": {"left": {"min": 5, "max": 1}}}, "must be below max"),
+        ({"axes": {"left": {"min": float("nan")}}}, "axis min must be a finite number"),
+        ({"axes": {"right": {"max": float("inf")}}}, "axis max must be a finite number"),
         ({"axes": {"left": {"format": "furlongs"}}}, "is not valid"),
     ]:
         with pytest.raises(ValidationError, match=needle):

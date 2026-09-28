@@ -154,6 +154,10 @@ class AxisSpec(BaseModel):
 
     @model_validator(mode="after")
     def check_bounds(self) -> "AxisSpec":
+        for key in ("min", "max"):
+            value = getattr(self, key)
+            if value is not None and not math.isfinite(value):
+                raise ValueError(f"axis {key} must be a finite number")
         if self.min is not None and self.max is not None and self.min >= self.max:
             raise ValueError(f"axis min ({self.min:g}) must be below max ({self.max:g})")
         return self

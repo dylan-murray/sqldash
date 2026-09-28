@@ -2935,3 +2935,57 @@ def test_a_combo_on_a_short_chart_writes_as_flow(tmp_path):
         {"type": "line", "y": ["a", "b"], "series": {"b": {"type": "bar", "axis": "right"}}},
     )
     assert "chart: {type: line, y: [a, b], series: {b: {type: bar, axis: right}}}" in text, text
+
+
+SHARED_SERIES_DOC = (
+    "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+    'queries: {q: "SELECT 1 AS w, 2 AS revenue, 0.5 AS rate"}\n'
+    "tiles:\n"
+    "  - title: A\n"
+    "    query: q\n"
+    "    chart:\n"
+    "      type: bar\n"
+    "      y: [revenue, rate]\n"
+    "      series: &shared\n"
+    "        rate: {type: line, axis: right}\n"
+    "  - title: B\n"
+    "    query: q\n"
+    "    chart:\n"
+    "      type: bar\n"
+    "      y: [revenue, rate]\n"
+    "      series: *shared\n"
+)
+
+
+@pytest.mark.parametrize("edited", ["a", "b"])
+def test_editing_an_anchored_series_mapping_leaves_its_aliases_alone(tmp_path, edited):
+    (tmp_path / "d.yaml").write_text(SHARED_SERIES_DOC)
+    store = DashboardStore(tmp_path)
+    _, _, etag = store.load("d")
+    chart = {
+        "type": "bar",
+        "y": ["revenue", "rate"],
+        "series": {"rate": {"type": "area", "axis": "right"}},
+    }
+    store.upsert_tile(
+        "d",
+        {"id": edited, "title": edited.upper(), "query": "q", "chart": chart},
+        sql=None,
+        if_match=etag,
+    )
+    dashboard, _, _ = store.load("d")
+    marks = {t.id: t.chart.series["rate"].type for t in dashboard.tiles}
+    assert marks == {"a": "line", "b": "line", edited: "area"}, (tmp_path / "d.yaml").read_text()
+
+
+def test_saving_an_unchanged_anchored_series_keeps_the_anchor(tmp_path):
+    (tmp_path / "d.yaml").write_text(SHARED_SERIES_DOC)
+    text = _save_combo(
+        tmp_path,
+        {
+            "type": "line",
+            "y": ["revenue", "rate"],
+            "series": {"rate": {"type": "line", "axis": "right"}},
+        },
+    )
+    assert text == SHARED_SERIES_DOC.replace("      type: bar\n", "      type: line\n", 1), text
