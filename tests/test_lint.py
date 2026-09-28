@@ -5,7 +5,8 @@ import pytest
 
 from sqldash.connectors.base import ConnectorError, TableInfo
 from sqldash.connectors.engine import EngineConnector
-from sqldash.lint import lint_project
+from sqldash.execution import ExecutionRegistry
+from sqldash.lint import lint_project, validate_dashboard
 from sqldash.models.results import QueryResult
 from sqldash.project.store import DashboardStore
 from sqldash.scaffold import create_demo
@@ -2152,3 +2153,64 @@ def test_validate_dashboard_probes_metrics_used_as_references(tmp_path, tiles, f
     missing = [e for e in payload["errors"] if "missing_column" in e]
     assert len(missing) == failing, payload["errors"]
     assert payload["valid"] is (failing == 0), payload
+
+
+def _validate_text(tmp_path, text: str, metrics_yaml: str | None = None) -> dict:
+    if metrics_yaml is not None:
+        (tmp_path / "metrics.yaml").write_text(metrics_yaml)
+    store = DashboardStore(tmp_path)
+    registry = ExecutionRegistry(max_workers=1)
+    try:
+        return validate_dashboard(
+            text, store=store, layer=SemanticLayer(store), registry=registry, check_sql=True
+        )
+    finally:
+        registry.shutdown()
+
+
+_REFERENCE_TILE = (
+    "tiles:\n"
+    "  - title: T\n"
+    "    sql: SELECT 1 AS a, 2 AS b\n"
+    "    chart: {type: bar, references: [{metric: target}]}\n"
+)
+
+
+def test_an_inline_reference_metric_is_probed_without_its_dimensions(tmp_path):
+    text = (
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        "metrics:\n"
+        "  target:\n"
+        "    sql: SELECT 1 AS amount, 2 AS region\n"
+        "    expr: SUM(amount) + region\n"
+        "    dimensions: [{name: region}]\n" + _REFERENCE_TILE
+    )
+    payload = _validate_text(tmp_path, text)
+    assert payload["valid"] is False, payload
+    assert any(
+        e.startswith("tile 't': reference 1 metric 'target' fails against the source")
+        and "region" in e
+        for e in payload["errors"]
+    ), payload["errors"]
+
+
+def test_a_reference_metric_is_probed_under_the_dashboard_filters(tmp_path):
+    metrics = (
+        "source: {type: duckdb, database: ':memory:'}\n"
+        'relations:\n  orders: {sql: "SELECT 1 AS amount"}\n'
+        "metrics:\n"
+        "  target:\n"
+        "    relation: orders\n"
+        "    expr: SUM(amount)\n"
+        "    dimensions: [{name: region, expr: missing_region}]\n"
+    )
+    filtered = (
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        "filters:\n  - {name: region, type: select, options: [us, eu], default: us}\n"
+        + _REFERENCE_TILE
+    )
+    payload = _validate_text(tmp_path, filtered, metrics)
+    assert any("missing_region" in e for e in payload["errors"]), payload
+    unfiltered = "title: D\nsource: {type: duckdb, database: ':memory:'}\n" + _REFERENCE_TILE
+    payload = _validate_text(tmp_path, unfiltered, metrics)
+    assert not any("missing_region" in e for e in payload["errors"]), payload
