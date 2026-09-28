@@ -2937,55 +2937,114 @@ def test_a_combo_on_a_short_chart_writes_as_flow(tmp_path):
     assert "chart: {type: line, y: [a, b], series: {b: {type: bar, axis: right}}}" in text, text
 
 
-SHARED_SERIES_DOC = (
-    "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
-    'queries: {q: "SELECT 1 AS w, 2 AS revenue, 0.5 AS rate"}\n'
-    "tiles:\n"
-    "  - title: A\n"
-    "    query: q\n"
-    "    chart:\n"
-    "      type: bar\n"
-    "      y: [revenue, rate]\n"
-    "      series: &shared\n"
-    "        rate: {type: line, axis: right}\n"
-    "  - title: B\n"
-    "    query: q\n"
-    "    chart:\n"
-    "      type: bar\n"
-    "      y: [revenue, rate]\n"
-    "      series: *shared\n"
+def _save_tile(tmp_path, tile_id, chart):
+    store = DashboardStore(tmp_path)
+    _, _, etag = store.load("d")
+    store.upsert_tile(
+        "d",
+        {"id": tile_id, "title": tile_id.upper(), "query": "q", "chart": chart},
+        sql=None,
+        if_match=etag,
+    )
+    dashboard, _, _ = store.load("d")
+    return (tmp_path / "d.yaml").read_text(), {t.id: t.chart for t in dashboard.tiles}
+
+
+def _two_tiles(a_chart: str, b_chart: str) -> str:
+    return (
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        'queries: {q: "SELECT 1 AS w, 2 AS revenue, 0.5 AS rate, 3 AS profit"}\n'
+        "tiles:\n"
+        "  - title: A\n    query: q\n    chart:\n"
+        + a_chart
+        + "  - title: B\n    query: q\n    chart:\n"
+        + b_chart
+    )
+
+
+SHARED_SERIES = _two_tiles(
+    "      type: bar\n      y: [revenue, rate]\n"
+    "      series: &shared\n        rate: {type: line, axis: right}\n",
+    "      type: bar\n      y: [revenue, rate]\n      series: *shared\n",
 )
 
 
 @pytest.mark.parametrize("edited", ["a", "b"])
-def test_editing_an_anchored_series_mapping_leaves_its_aliases_alone(tmp_path, edited):
-    (tmp_path / "d.yaml").write_text(SHARED_SERIES_DOC)
-    store = DashboardStore(tmp_path)
-    _, _, etag = store.load("d")
+def test_editing_a_shared_series_mapping_leaves_the_other_tile_alone(tmp_path, edited):
+    (tmp_path / "d.yaml").write_text(SHARED_SERIES)
     chart = {
         "type": "bar",
         "y": ["revenue", "rate"],
         "series": {"rate": {"type": "area", "axis": "right"}},
     }
-    store.upsert_tile(
-        "d",
-        {"id": edited, "title": edited.upper(), "query": "q", "chart": chart},
-        sql=None,
-        if_match=etag,
+    text, charts = _save_tile(tmp_path, edited, chart)
+    marks = {tile: c.series["rate"].type for tile, c in charts.items()}
+    assert marks == {"a": "line", "b": "line", edited: "area"}, text
+    assert "&" not in text.split("  - title: " + edited.upper())[1].split("  - title:")[0], text
+
+
+def test_nested_aliases_are_expanded_before_an_edit(tmp_path):
+    (tmp_path / "d.yaml").write_text(
+        _two_tiles(
+            "      type: bar\n      y: [revenue, rate]\n"
+            "      series: &shared {revenue: &line {type: line}, rate: *line}\n",
+            "      type: bar\n      y: [revenue, rate]\n      series: *shared\n",
+        )
     )
-    dashboard, _, _ = store.load("d")
-    marks = {t.id: t.chart.series["rate"].type for t in dashboard.tiles}
-    assert marks == {"a": "line", "b": "line", edited: "area"}, (tmp_path / "d.yaml").read_text()
+    chart = {
+        "type": "bar",
+        "y": ["revenue", "rate"],
+        "series": {"revenue": {"type": "line"}, "rate": {"type": "area"}},
+    }
+    text, charts = _save_tile(tmp_path, "b", chart)
+    assert charts["b"].series["revenue"].type == "line", text
+    assert charts["b"].series["rate"].type == "area", text
+    assert charts["a"].series["rate"].type == "line", text
+    assert "*" not in text.split("  - title: B")[1], text
 
 
-def test_saving_an_unchanged_anchored_series_keeps_the_anchor(tmp_path):
-    (tmp_path / "d.yaml").write_text(SHARED_SERIES_DOC)
-    text = _save_combo(
-        tmp_path,
-        {
-            "type": "line",
-            "y": ["revenue", "rate"],
-            "series": {"rate": {"type": "line", "axis": "right"}},
+MERGED_SERIES = _two_tiles(
+    "      type: bar\n      y: [revenue, rate, profit]\n      series:\n"
+    "        rate: &right {type: line, axis: right}\n"
+    "        profit: {<<: *right, label: Profit}\n",
+    "      type: bar\n      y: [revenue, rate]\n      series: {rate: *right}\n",
+)
+
+
+def test_overriding_a_merged_key_writes_the_override(tmp_path):
+    (tmp_path / "d.yaml").write_text(MERGED_SERIES)
+    chart = {
+        "type": "bar",
+        "y": ["revenue", "rate", "profit"],
+        "series": {
+            "rate": {"type": "line", "axis": "right"},
+            "profit": {"type": "area", "axis": "right", "label": "Profit"},
         },
-    )
-    assert text == SHARED_SERIES_DOC.replace("      type: bar\n", "      type: line\n", 1), text
+    }
+    text, charts = _save_tile(tmp_path, "a", chart)
+    assert charts["a"].series["profit"].type == "area", text
+    assert charts["a"].series["rate"].type == "line", text
+    assert charts["b"].series["rate"].type == "line", text
+    assert "<<" not in text, text
+
+
+def test_deleting_a_merged_key_takes_it_off_the_series(tmp_path):
+    (tmp_path / "d.yaml").write_text(MERGED_SERIES)
+    chart = {
+        "type": "bar",
+        "y": ["revenue", "rate", "profit"],
+        "series": {"rate": {"type": "line", "axis": "right"}, "profit": {"type": "line"}},
+    }
+    text, charts = _save_tile(tmp_path, "a", chart)
+    assert charts["a"].series["profit"].axis is None, text
+    assert charts["a"].series["rate"].axis == "right", text
+    assert charts["b"].series["rate"].axis == "right", text
+
+
+@pytest.mark.parametrize("doc", [SHARED_SERIES, MERGED_SERIES], ids=["alias", "merge"])
+def test_an_unchanged_save_of_a_shared_chart_is_byte_identical(tmp_path, doc):
+    (tmp_path / "d.yaml").write_text(doc)
+    dashboard, _, _ = DashboardStore(tmp_path).load("d")
+    chart = dashboard.tiles[0].chart.model_dump(exclude_defaults=True)
+    text, _ = _save_tile(tmp_path, "a", chart)
+    assert text == doc, text
