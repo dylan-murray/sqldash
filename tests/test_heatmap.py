@@ -162,6 +162,16 @@ def test_changing_an_order_entry_from_number_to_text_is_saved(tmp_path):
     assert "x_order: ['1']" in written, written
 
 
+@pytest.mark.parametrize(
+    ("before", "after", "expected"), [("[1]", [True], "[true]"), ("[true]", [1], "[1]")]
+)
+def test_order_edits_between_true_and_1_are_saved(tmp_path, before, after, expected):
+    chart = "      type: heatmap\n      x: k\n      y: r\n      value: v\n"
+    chart += f"      x_order: {before}\n"
+    written = _edit_chart(tmp_path, chart, {"x_order": after})
+    assert f"x_order: {expected}" in written, written
+
+
 def test_styled_order_integers_and_either_y_spelling_keep_their_comments(tmp_path):
     chart = (
         "      type: heatmap\n"
@@ -387,3 +397,50 @@ def test_switching_to_heatmap_before_running_saves_one_y(tmp_path):
     assert "type: heatmap" in text, text
     assert "hour, orders" not in text, text
     assert not [e for e in lint_errors(tmp_path) if "one y column" in e]
+
+
+@pytest.mark.skipif(not _browser_available(), reason="playwright browser not installed")
+def test_clicking_a_heatmap_cell_changes_no_filter(tmp_path):
+    from playwright.sync_api import sync_playwright
+
+    (tmp_path / "d.yaml").write_text(
+        "title: D\n"
+        "source: {type: duckdb, database: ':memory:'}\n"
+        "filters:\n"
+        "  - {name: x, type: select, options: [a, 'a × b']}\n"
+        "tiles:\n"
+        "  - title: Cells\n"
+        "    chart: {type: heatmap, x: x, y: y, value: v}\n"
+        "    sql: SELECT * FROM (VALUES ('a', 'b', 10), ('a × b', 'c', 20)) t(x, y, v)\n"
+    )
+    app = create_app(tmp_path, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page(viewport={"width": 1300, "height": 1000})
+            page.goto(f"http://127.0.0.1:{port}/d/d", wait_until="load")
+            deadline = time.monotonic() + 30
+            while page.evaluate("() => document.querySelectorAll('.tile-status .skeleton').length"):
+                assert time.monotonic() < deadline, "tiles never finished loading"
+                time.sleep(0.2)
+            page.wait_for_timeout(500)
+            select = "() => document.querySelector('.filter-bar select[data-filter=\"x\"]').value"
+            before = page.evaluate(select)
+            point = page.evaluate("""() => {
+                const mount = document.querySelector('.tile .chart-mount');
+                const chart = echarts.getInstanceByDom(mount);
+                const [x, y] = chart.convertToPixel({seriesIndex: 0}, [0, 0]);
+                const box = mount.getBoundingClientRect();
+                return [box.left + x, box.top + y];
+            }""")
+            page.mouse.click(*point)
+            page.wait_for_timeout(500)
+            after = page.evaluate(select)
+            url = page.url
+            browser.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+    assert before == after, (before, after)
+    assert "x=" not in url, url
