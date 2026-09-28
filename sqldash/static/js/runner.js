@@ -21,6 +21,7 @@ import {
   refreshDrillLinks,
   rowForPoint,
   tableDrillCells,
+  valueKind,
 } from "/static/js/drill.js";
 import { paramNamesIn } from "/static/js/params.js";
 import { compareWindow, currentThenPrevious, presetRange } from "/static/js/period.js";
@@ -808,8 +809,12 @@ function refuseUrlValue(bind, value) {
   toast(`${label} has no '${value}' to filter to, so it is showing its default`, "error");
 }
 
+function selectOptions(select) {
+  return [...select.options].map((o) => ({ value: o.value, kind: o.dataset.kind || "string" }));
+}
+
 function selectValue(select, value) {
-  return matchOption([...select.options].map((o) => o.value), value) ?? value;
+  return matchOption(selectOptions(select), value, null) ?? value;
 }
 
 export function applyFiltersFromUrl() {
@@ -860,13 +865,15 @@ async function loadFilterOptions() {
       const asked = new URLSearchParams(location.search).get(`f_${name}`);
       const desired = asked ?? (authored || select.value);
       select.innerHTML = "";
+      const kind = valueKind(result.columns[0]?.type);
       for (const v of ["all", ...values]) {
         const opt = document.createElement("option");
         opt.value = v;
+        opt.dataset.kind = v === "all" ? "string" : kind;
         opt.textContent = v;
         select.appendChild(opt);
       }
-      const option = matchOption([...select.options].map((o) => o.value), desired);
+      const option = matchOption(selectOptions(select), desired, null);
       if (option !== undefined) select.value = option;
       else if (asked !== null) refuseUrlValue(name, asked);
       if (select.value !== "all" ) {

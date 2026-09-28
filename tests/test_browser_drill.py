@@ -276,6 +276,21 @@ filters:
 tiles:
   - {title: Rows, sql: "SELECT 1 AS n"}
 """,
+    "codes": """title: Codes
+source: {type: duckdb, attach_files: true}
+tiles:
+  - title: Codes
+    chart: table
+    sql: "SELECT '00100' AS code"
+    drill: {dashboard: code_dest, filters: {code: code}}
+""",
+    "code_dest": """title: Code dest
+source: {type: duckdb, attach_files: true}
+filters:
+  - {name: code, type: select, options: [all, '100']}
+tiles:
+  - {title: Rows, sql: "SELECT 1 AS n"}
+""",
     "dest_a": "title: Dest A\nsource: {type: duckdb, attach_files: true}\n"
     "filters:\n  - {name: k, type: text}\ntiles:\n  - {title: A, sql: 'SELECT 1 AS n'}\n",
     "dest_b": "title: Dest B\nsource: {type: duckdb, attach_files: true}\n"
@@ -408,3 +423,12 @@ def test_an_old_url_spelling_still_sets_the_filter(page, edges):
     assert page.eval_on_selector('select[data-filter="active"]', "e => e.value") == "false"
     assert page.eval_on_selector('select[data-filter="rate"]', "e => e.value") == "2"
     assert page.locator(".toast-error").count() == 0
+
+
+def test_a_text_code_never_drills_into_a_differently_spelled_option(page, edges):
+    page.goto(f"{edges}/d/codes")
+    _wait_tiles(page)
+    page.locator('.tile[data-tile-id="codes"] a.cell-link').first.click()
+    page.wait_for_selector(".toast-error")
+    assert "'00100' is not one of the options" in page.locator(".toast-error").first.text_content()
+    assert "/d/codes" in page.url

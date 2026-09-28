@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { drillUrl, rowForPoint } from "../sqldash/static/js/drill.js";
+import { drillUrl, matchOption, rowForPoint } from "../sqldash/static/js/drill.js";
 
 const result = {
   columns: [
@@ -150,22 +150,49 @@ test("a number is sent the way a number input takes it, and a date must be on th
   assert.match(one("date", "2026-13-01").error, /not a date/);
 });
 
-test("a cell drills into its option however either side spells the value", () => {
-  const one = (options, value, type = "float") =>
+test("a typed cell matches a typed option by value, and text only ever matches exactly", () => {
+  const one = (options, kinds, value, type) =>
     drillUrl(
-      plan([{ param: "v", type: "select", column: "v", options }]),
+      plan([{ param: "v", type: "select", column: "v", options, option_kinds: kinds }]),
       [value],
       [{ name: "v", type }],
       context,
     );
   const sent = (...args) => new URL(one(...args).href, "http://x").searchParams.get("f_v");
-  assert.equal(sent(["all", "true", "false"], true, "boolean"), "true");
-  assert.equal(sent(["all", "true", "false"], "True", "string"), "true");
-  assert.equal(sent(["1", "2"], 1.0), "1");
-  assert.equal(sent(["1", "2"], "1.0", "string"), "1");
-  assert.equal(sent(["0.000001"], 0.000001), "0.000001");
-  assert.match(one(["1", "2"], 3).error, /'3' is not one of the options/);
+  const bools = [["all", "true", "false"], ["string", "boolean", "boolean"]];
+  const nums = [["1", "2"], ["number", "number"]];
+  assert.equal(sent(...bools, true, "boolean"), "true");
+  assert.equal(sent(...nums, 1.0, "float"), "1");
+  assert.equal(sent(...nums, "1.0", "decimal"), "1");
+  assert.equal(sent(["0.000001"], ["number"], 0.000001, "float"), "0.000001");
+  assert.match(one(...nums, 3, "integer").error, /'3' is not one of the options/);
+  assert.match(one(["all", "100"], ["string", "string"], "00100", "string").error, /'00100'/);
+  assert.match(one(["100"], ["number"], "00100", "string").error, /'00100'/);
+  assert.match(one(...bools, "True", "string").error, /'True'/);
+  assert.equal(sent(["all", "100"], ["string", "string"], "100", "string"), "100");
   const text = plan([{ param: "active", type: "text", column: "active" }]);
   const href = drillUrl(text, [true], [{ name: "active", type: "boolean" }], context).href;
   assert.equal(new URL(href, "http://x").searchParams.get("f_active"), "true");
+});
+
+test("a carried filter matches options by the type of the filter it came from", () => {
+  const carried = (kind, options, kinds) =>
+    plan([{ param: "v", type: "select", current: "src", kind, options, option_kinds: kinds }]);
+  const at = (p, src) => drillUrl(p, [], [], { ...context, filters: { src } });
+  const num = carried("number", ["1", "2"], ["number", "number"]);
+  assert.equal(new URL(at(num, "1.0").href, "http://x").searchParams.get("f_v"), "1");
+  const text = carried("string", ["100"], ["string"]);
+  assert.match(at(text, "00100").error, /'00100'/);
+});
+
+test("a URL value adopts the option's type but never loosens a text option", () => {
+  const options = [
+    { value: "all", kind: "string" },
+    { value: "true", kind: "boolean" },
+    { value: "2", kind: "number" },
+    { value: "100", kind: "string" },
+  ];
+  assert.equal(matchOption(options, "True", null), "true");
+  assert.equal(matchOption(options, "2.0", null), "2");
+  assert.equal(matchOption(options, "00100", null), undefined);
 });

@@ -787,6 +787,16 @@ def option_value(value: Any) -> str:
     return str(value)
 
 
+def option_kind(value: Any) -> str:
+    """What an option's YAML scalar is, so the browser only compares it as a
+    number or a boolean when the clicked cell is one too: `'100'` is text."""
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int | float):
+        return "number"
+    return "string"
+
+
 def select_choices(filter_def: "FilterDef") -> list[Any]:
     """Options shown in the UI. `all` is the off-sentinel; if it is the default
     *or there is no default* it must appear even when the authored list omitted

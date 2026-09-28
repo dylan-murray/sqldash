@@ -59,20 +59,33 @@ function valueText(value, type, column) {
   return { text: type === "number" ? numberText(text.trim()) : text };
 }
 
-function canonical(value) {
-  if (typeof value === "boolean" || typeof value === "number") return String(value);
-  const text = String(value);
-  const lower = text.trim().toLowerCase();
-  if (lower === "true" || lower === "false") return lower;
-  if (/^[+-]?\d+$/.test(text.trim())) return BigInt(text.trim()).toString();
-  if (NUMBER_TEXT.test(text.trim())) return String(Number(text));
-  return text;
+const NUMERIC_COLUMNS = new Set(["integer", "float", "decimal"]);
+
+export function valueKind(columnType) {
+  if (NUMERIC_COLUMNS.has(columnType)) return "number";
+  return columnType === "boolean" ? "boolean" : "string";
 }
 
-export function matchOption(options, value) {
-  if (options.includes(value)) return value;
-  const wanted = canonical(value);
-  return options.find((option) => canonical(option) === wanted);
+function typed(value, kind) {
+  const text = String(value).trim();
+  if (kind === "boolean") {
+    const lower = text.toLowerCase();
+    return lower === "true" || lower === "false" ? lower : null;
+  }
+  if (kind !== "number") return null;
+  if (/^[+-]?\d+$/.test(text)) return BigInt(text).toString();
+  return NUMBER_TEXT.test(text) ? String(Number(text)) : null;
+}
+
+export function matchOption(options, value, kind = "string") {
+  const exact = options.find((option) => option.value === value);
+  if (exact || kind === "string") return exact?.value;
+  const typedOptions = options.filter((o) => o.kind === "number" || o.kind === "boolean");
+  return typedOptions.find((option) => {
+    if (kind !== null && option.kind !== kind) return false;
+    const wanted = typed(value, option.kind);
+    return wanted !== null && wanted === typed(option.value, option.kind);
+  })?.value;
 }
 
 export function drillUrl(plan, row, columns, context) {
@@ -86,8 +99,10 @@ export function drillUrl(plan, row, columns, context) {
   }
   for (const param of plan.params) {
     let text;
+    let kind;
     if (param.current !== undefined) {
       text = context.filters[param.current];
+      kind = param.kind ?? "string";
       if (text === undefined || text === "") continue;
     } else {
       const at = columns.findIndex((c) => c.name === param.column);
@@ -95,9 +110,14 @@ export function drillUrl(plan, row, columns, context) {
       const value = valueText(row?.[at], param.type, param.column);
       if (value.error) return { error: value.error };
       text = value.text;
+      kind = valueKind(columns[at].type);
     }
     if (param.options) {
-      const option = matchOption(param.options, text);
+      const options = param.options.map((value, i) => ({
+        value,
+        kind: param.option_kinds?.[i] ?? "string",
+      }));
+      const option = matchOption(options, text, kind);
       if (option === undefined) {
         return { error: `'${text}' is not one of the options of ${plan.title}'s ${param.param} filter` };
       }

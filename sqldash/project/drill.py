@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 from sqldash.models.dashboard import Dashboard, FilterDef, Tile
 from sqldash.models.drill import CurrentFilter, DrillSpec
-from sqldash.params import option_value, select_choices
+from sqldash.params import option_kind, option_value, select_choices
 from sqldash.project.store import InvalidDashboardError, NotFoundError, Store
 
 SCALAR_ACCEPTS = {
@@ -78,7 +78,11 @@ def _options(target_filter: FilterDef) -> dict[str, list[str]]:
     """The choices a destination select offers, when they are known before it runs."""
     if target_filter.type != "select" or target_filter.options is None:
         return {}
-    return {"options": [option_value(o) for o in select_choices(target_filter)]}
+    choices = select_choices(target_filter)
+    return {
+        "options": [option_value(o) for o in choices],
+        "option_kinds": [option_kind(o) for o in choices],
+    }
 
 
 def _map_current(
@@ -106,7 +110,12 @@ def _map_current(
             f"drill filter {_filter_label(target_filter)} cannot take this dashboard's "
             f"filter {_filter_label(own)}; the value would not fit the destination"
         )
-    entry = {"param": target_filter.name, "type": target_filter.type, "current": own.name}
+    entry = {
+        "param": target_filter.name,
+        "type": target_filter.type,
+        "current": own.name,
+        "kind": "number" if own.type == "number" else "string",
+    }
     return [entry | _options(target_filter)], None
 
 

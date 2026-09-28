@@ -298,7 +298,14 @@ def test_a_carried_filter_value_is_checked_against_the_destination_options(tmp_p
     dashboard, _, _ = store.load("overview")
     plan = plan_drill(store, "overview", dashboard, dashboard.tiles[0])
     assert plan["params"] == [
-        {"param": "tier", "type": "select", "current": "region", "options": ["all", "eu", "apac"]}
+        {
+            "param": "tier",
+            "type": "select",
+            "current": "region",
+            "kind": "string",
+            "options": ["all", "eu", "apac"],
+            "option_kinds": ["string", "string", "string"],
+        }
     ]
 
 
@@ -493,14 +500,17 @@ def test_an_inline_metric_tile_on_a_missing_dialect_still_gets_a_report(tmp_path
 
 
 @pytest.mark.parametrize(
-    ("options", "expected"),
+    ("options", "expected", "kind"),
     [
-        ("[true, false]", ["all", "true", "false"]),
-        ("[1.0, 2.0]", ["all", "1", "2"]),
-        ("[1e-06, 0.5]", ["all", "0.000001", "0.5"]),
+        ("[true, false]", ["all", "true", "false"], "boolean"),
+        ("[1.0, 2.0]", ["all", "1", "2"], "number"),
+        ("[1e-06, 0.5]", ["all", "0.000001", "0.5"], "number"),
+        ("['100', '00100']", ["all", "100", "00100"], "string"),
     ],
 )
-def test_plan_options_are_spelled_the_way_the_browser_spells_a_cell(tmp_path, options, expected):
+def test_plan_options_are_spelled_the_way_the_browser_spells_a_cell(
+    tmp_path, options, expected, kind
+):
     detail = DETAIL.replace("options: [all, gold, silver]", f"options: {options}")
     store = _project(
         tmp_path,
@@ -510,6 +520,7 @@ def test_plan_options_are_spelled_the_way_the_browser_spells_a_cell(tmp_path, op
     dashboard, _, _ = store.load("overview")
     plan = plan_drill(store, "overview", dashboard, dashboard.tiles[0])
     assert plan["params"][0]["options"] == expected
+    assert plan["params"][0]["option_kinds"] == ["string", *[kind] * (len(expected) - 1)]
 
 
 def test_the_filter_bar_values_use_that_spelling_and_keep_their_labels(tmp_path):
@@ -522,10 +533,10 @@ def test_the_filter_bar_values_use_that_spelling_and_keep_their_labels(tmp_path)
     app = create_app(tmp_path, allowed_hosts=["testserver"])
     with TestClient(app) as client:
         page = client.get("/d/detail").text
-    assert '<option value="true" selected>True</option>' in page
-    assert '<option value="false" >False</option>' in page
-    assert '<option value="1" >1.0</option>' in page
-    assert '<option value="0.000001" >1e-06</option>' in page
+    assert '<option value="true" selected data-kind="boolean">True</option>' in page
+    assert '<option value="false" data-kind="boolean">False</option>' in page
+    assert '<option value="1" data-kind="number">1.0</option>' in page
+    assert '<option value="0.000001" data-kind="number">1e-06</option>' in page
 
 
 @pytest.mark.parametrize(
