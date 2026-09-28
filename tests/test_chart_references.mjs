@@ -74,11 +74,10 @@ test("value lines, bands and x markers land on the right axes", () => {
   assert.equal(lines[0].yAxis, 120000);
   assert.equal(lines[0].label.formatter, "Stretch goal  $120,000");
   assert.equal(lines[0].lineStyle.type, "dashed");
-  const day = (y, m, d) => new Date(y, m - 1, d).toISOString();
-  assert.equal(lines.find((l) => l.xAxis === day(2026, 8, 10)).label.formatter, "Launch");
+  assert.equal(lines.find((l) => l.xAxis === "2026-08-10").label.formatter, "Launch");
   const bands = carrier(option, "__reference_bands").markArea.data;
   assert.deepEqual([bands[0][0].yAxis, bands[0][1].yAxis], [40000, 60000]);
-  assert.deepEqual([bands[1][0].xAxis, bands[1][1].xAxis], [day(2026, 8, 3), day(2026, 8, 17)]);
+  assert.deepEqual([bands[1][0].xAxis, bands[1][1].xAxis], ["2026-08-03", "2026-08-17"]);
   assert.deepEqual(option.yAxis.max({ min: 50000, max: 57000 }), 120000);
 });
 
@@ -305,8 +304,8 @@ test("a timestamp marker with a fractional offset lands where the axis extent pu
     days
   );
   const at = carrier(option, "__reference_lines").markLine.data[0].xAxis;
-  assert.equal(at, "2026-09-02T18:30:00.000Z");
-  assert.equal(option.xAxis.max({ min: 0, max: 0 }), Date.parse(at));
+  assert.equal(at, "2026-09-03T00:00:00+05:30");
+  assert.equal(option.xAxis.max({ min: 0, max: 0 }), echarts.number.parseDate(at).getTime());
   assert.ok(renderedSvg(option).includes(">Goal<"));
 });
 
@@ -329,4 +328,46 @@ test("a day matches a timestamp category only on a date column and only before a
     "2026-09-01T00:00:00",
   ]);
   assert.deepEqual(marker(labelled("timestamp", ["2026-09-01 08:30:00+05:30"])), ["2026-09-01 08:30:00+05:30"]);
+});
+
+test("a marker at a series point's own +05:30 timestamp draws at that point", () => {
+  const stamps = ["2026-09-03T00:00:00+05:30", "2026-09-03T02:00:00+05:30"];
+  const result = {
+    columns: [
+      { name: "at", type: "timestamp" },
+      { name: "n", type: "float" },
+    ],
+    rows: stamps.map((at, i) => [at, i + 1]),
+  };
+  const option = translate(
+    { type: "line", x: "at", y: ["n"], references: [{ x: stamps[1], label: "Goal" }] },
+    result
+  );
+  const fake = globalThis.document;
+  delete globalThis.document;
+  try {
+    const chart = echarts.init(null, null, { renderer: "svg", ssr: true, width: 600, height: 300 });
+    chart.setOption(option);
+    const point = chart.convertToPixel({ seriesIndex: 0 }, [stamps[1], 2])[0];
+    const marker = chart.convertToPixel(
+      { xAxisIndex: 0 },
+      carrier(option, "__reference_lines").markLine.data[0].xAxis
+    );
+    const svg = chart.renderToSVGString();
+    chart.dispose();
+    assert.ok(Math.abs(point - marker) < 0.5, [point, marker]);
+    assert.ok(svg.includes(">Goal<"));
+  } finally {
+    globalThis.document = fake;
+  }
+});
+
+test("reference times parse the way the vendored ECharts parses them", () => {
+  for (const text of ["2026-09-03", "2026-09-03 08:15", "2026-09-03T00:00:00+05:30", "2026-09-03T01:02:03.456Z"]) {
+    const option = translate(
+      { type: "line", x: "day", y: ["n"], references: [{ x: text }] },
+      { columns: [{ name: "day", type: "date" }, { name: "n", type: "float" }], rows: [["2026-01-01", 1]] }
+    );
+    assert.equal(option.xAxis.max({ min: 0, max: 0 }), echarts.number.parseDate(text).getTime(), text);
+  }
 });

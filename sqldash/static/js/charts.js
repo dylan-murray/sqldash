@@ -665,12 +665,24 @@ function finiteNumber(value) {
   return value !== null && value !== "" && Number.isFinite(n) ? n : null;
 }
 
+/* ECharts' own date parsing (echarts.number.parseDate in the vendored
+   5.5.1): the time axis places series values with it, so a reference has to
+   use it too or it drifts from an identical point. It reads only the hour of
+   an offset, which is why +05:30 lands at +05:00. */
+const ECHARTS_TIME =
+  /^(?:(\d{4})(?:[-/](\d{1,2})(?:[-/](\d{1,2})(?:[T ](\d{1,2})(?::(\d{1,2})(?::(\d{1,2})(?:[.,](\d+))?)?)?(Z|[+-]\d\d:?\d\d)?)?)?)?)?$/;
+
 function timeValue(value) {
-  const text = String(value);
-  const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
-  if (day) return new Date(Number(day[1]), Number(day[2]) - 1, Number(day[3])).getTime();
-  const parsed = Date.parse(text);
-  return Number.isNaN(parsed) ? null : parsed;
+  if (typeof value === "number") return Number.isFinite(value) ? Math.round(value) : null;
+  const m = ECHARTS_TIME.exec(String(value));
+  if (!m || !m[1]) return null;
+  const day = [+m[1], +(m[2] || 1) - 1, +m[3] || 1];
+  const rest = [+(m[5] || 0), +m[6] || 0, m[7] ? +m[7].substring(0, 3) : 0];
+  if (m[8]) {
+    const hour = (+m[4] || 0) - (m[8].toUpperCase() === "Z" ? 0 : +m[8].slice(0, 3));
+    return Date.UTC(...day, hour, ...rest);
+  }
+  return new Date(...day, +m[4] || 0, ...rest).getTime();
 }
 
 function niceStep(raw) {
@@ -826,16 +838,12 @@ function addReferences(option, spec, result, { horizontal, isTemporal, yFormat, 
   const valueLines = [];
   const values = [];
   const times = [];
-  /* On a time axis a marker goes where the axis extent put it: the one
-     instant timeValue read, handed to ECharts as a UTC ISO string rather
-     than the authored text, which ECharts would parse again its own way
-     (it reads a +05:30 offset as +05:00). */
   const place = (value) => {
     if (isTemporal) {
       const t = timeValue(value);
       if (t === null) return null;
       times.push(t);
-      return new Date(t).toISOString();
+      return value;
     }
     return matchCategory(value, categories, temporalCategories);
   };
