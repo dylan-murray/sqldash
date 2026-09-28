@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { pruneSpecForType } from "../sqldash/static/js/charts.js";
+import { pruneSpecForType, setFormatConfig } from "../sqldash/static/js/charts.js";
 import {
   binLabel,
   binValues,
@@ -9,6 +9,8 @@ import {
   histogramScope,
   MAX_BINS,
 } from "../sqldash/static/js/histogram.js";
+
+setFormatConfig({ locale: "en-US" });
 
 const edges = (summary) => summary.bins.map((b) => [b.lo, b.hi, b.count]);
 const total = (summary) => summary.bins.reduce((n, b) => n + b.count, 0);
@@ -156,11 +158,50 @@ test("tiny values bin across their own range", () => {
   assert.equal(summary.bins.at(-1).count, 1);
 });
 
-test("endpoints near the float limit bin without overflowing", () => {
-  const summary = binValues([-1e308, 1e308], {});
-  assert.equal(total(summary), 2);
-  assert.ok(summary.bins.length <= 40);
-  assert.equal(total(binValues([-1e308, 1e308], { bins: 4 })), 2);
+test("values too far apart or too close together to bin are flagged, not drawn wrong", () => {
+  for (const [values, options] of [
+    [[-1e308, 1e308], {}],
+    [[-1e308, 1e308], { bins: 10 }],
+    [[1e16, 1e16 + 2], {}],
+    [[1e16, 1e16 + 2], { bin_width: 0.5 }],
+  ]) {
+    const summary = binValues(values, options);
+    assert.equal(summary.unbinnable, true, JSON.stringify([values, options]));
+    assert.deepEqual(summary.bins, []);
+  }
+});
+
+test("large but representable edges are kept exactly instead of rounded together", () => {
+  assert.deepEqual(edges(binValues([1e15, 1e15 + 1, 1e15 + 2], { bins: 2 })), [
+    [1e15, 1e15 + 1, 1],
+    [1e15 + 1, 1e15 + 2, 2],
+  ]);
+});
+
+test("labels keep the authored bin_start offset", () => {
+  const summary = binValues([0.001, 1.001, 2.001], { bin_width: 1, bin_start: 0.001 });
+  assert.deepEqual(
+    summary.bins.map((b) => binLabel(b, "number", summary.digits)),
+    ["0.001 to under 1.001", "1.001 to 2.001"]
+  );
+});
+
+test("tiny edges switch to scientific labels instead of all reading 0", () => {
+  const summary = binValues([1e-22, 2e-22], {});
+  const labels = summary.bins.map((b) => binLabel(b, "number", summary.digits));
+  assert.equal(new Set(labels).size, labels.length, labels.join(" | "));
+  assert.equal(labels[0], "1E-22 to under 1.25E-22");
+});
+
+test("counts in the scope line follow the dashboard locale", () => {
+  const summary = binValues([...Array(1500).keys(), null], {});
+  setFormatConfig({ locale: "de-DE" });
+  try {
+    assert.equal(histogramScope(summary, { truncated: false }), "1.500 values · 1 null excluded");
+  } finally {
+    setFormatConfig({ locale: "en-US" });
+  }
+  assert.equal(histogramScope(summary, { truncated: false }), "1,500 values · 1 null excluded");
 });
 
 test("interval labels say which edge is included", () => {

@@ -312,6 +312,10 @@ export class ChartBuilder {
         else this._spec[key] = input.value || null;
         if (key === "palette" && this._spec.palette !== "diverging") this._spec.midpoint = null;
         if (key === "palette") this.renderEncodings();
+        if (key === "bin_width" && this._spec.bin_width == null && this._spec.bin_start != null) {
+          this._spec.bin_start = null;
+          this.renderEncodings();
+        }
         this.renderPreview();
         this.onChange();
       });

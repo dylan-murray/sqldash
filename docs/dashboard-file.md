@@ -85,7 +85,9 @@ a 10 lands in 10 to 20, not 0 to 10, and negative values bin the same way
 (-0.5 lands in -10 to 0). A column where every value is the same draws one bar at
 that value. Nulls and values that are not finite numbers are left out, never
 counted as zero, and the line above the chart says how many rows were binned and
-how many were left out. The bin counts always add up to that number.
+how many were left out. The bin counts always add up to that number. Values spread
+so far apart that the range overflows, or so close together that a bin would be
+narrower than the numbers can resolve, show a note saying so instead of bars.
 
 Binning happens in the browser, over the rows the query returned. When the row
 cap cut the result short, the note under the chart says so, and each bar's

@@ -14,6 +14,8 @@ from sqldash.semantics import SemanticLayer
 from sqldash.server import create_app
 from sqldash.snapshot import _start_server
 
+UNBINNABLE = "These values span too wide or too narrow a range to bin"
+
 
 def lint_errors(root):
     store = DashboardStore(root)
@@ -132,6 +134,9 @@ tiles:
   - title: Truncated
     chart: {type: histogram, x: v}
     sql: SELECT i AS v FROM range(0, 5000) t(i)
+  - title: Too wide
+    chart: {type: histogram, x: v}
+    sql: SELECT * FROM (VALUES (-1e308), (1e308)) t(v)
 """
 
 
@@ -163,6 +168,7 @@ def test_histograms_render_real_duckdb_distributions(tmp_path):
                         scope: option.series[1].data[0][0],
                         ticks: option.xAxis[0].axisLabel.customValues ?? null,
                         note: tile.querySelector('.truncated-note')?.textContent ?? null,
+                        empty: tile.querySelector('.chart-empty')?.textContent ?? null,
                     }];
                 }))""")
             page.set_viewport_size({"width": 390, "height": 1000})
@@ -203,5 +209,55 @@ def test_histograms_render_real_duckdb_distributions(tmp_path):
     assert sum(b[2] for b in truncated["bins"]) == 1000
     assert truncated["scope"] == "1,000 values"
     assert truncated["note"] == "showing first 1,000 rows (truncated)"
+    assert state["too_wide"]["bins"] == []
+    assert state["too_wide"]["empty"] == UNBINNABLE
     assert narrow["texts"], narrow
     assert all(right <= narrow["width"] - 8 for _, right in narrow["texts"]), narrow
+
+
+@pytest.mark.skipif(not _browser_available(), reason="playwright browser not installed")
+def test_clearing_the_width_in_the_builder_drops_bin_start_too(tmp_path):
+    from playwright.sync_api import sync_playwright
+
+    doc = (
+        "title: H\n"
+        "source: {type: duckdb, database: ':memory:'}\n"
+        "tiles:\n"
+        "  - title: Spread\n"
+        "    chart: {type: histogram, x: v, bin_width: 10, bin_start: 5}\n"
+        "    sql: SELECT i::DOUBLE AS v FROM range(0, 100) t(i)\n"
+    )
+    (tmp_path / "h.yaml").write_text(doc)
+    app = create_app(tmp_path, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    saves = []
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page(viewport={"width": 1300, "height": 1000})
+            page.on(
+                "response",
+                lambda r: saves.append(r.status) if r.request.method == "PUT" else None,
+            )
+            page.goto(f"http://127.0.0.1:{port}/d/h/query?tile=spread", wait_until="load")
+            page.wait_for_selector("#qb-type .seg-btn.active")
+            page.locator("#run-btn").click()
+            page.wait_for_function(
+                "() => document.querySelector('#qb-preview .chart-mount')", timeout=20000
+            )
+            width = page.locator('#qb-encoding input[data-spec="bin_width"]')
+            width.fill("")
+            width.dispatch_event("change")
+            mode = page.evaluate("() => document.querySelector('[data-bin-mode]').value")
+            page.locator("#qb-add").click()
+            deadline = time.monotonic() + 10
+            while not saves:
+                assert time.monotonic() < deadline, "the tile was never saved"
+                page.wait_for_timeout(100)
+            browser.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+    assert mode == "auto"
+    assert saves == [200], saves
+    assert "    chart: {type: histogram, x: v}\n" in (tmp_path / "h.yaml").read_text()

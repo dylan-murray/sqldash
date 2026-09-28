@@ -8,6 +8,7 @@ import {
   formatValue,
   humanize,
   seriesFormat,
+  setEmptyReason,
 } from "./charts.js";
 
 export const MAX_BINS = 200;
@@ -33,12 +34,38 @@ function niceStep(raw) {
 function decimalsOf(step) {
   const [mantissa, exponent] = String(step).toLowerCase().split("e");
   const frac = (mantissa.split(".")[1] ?? "").length;
-  return Math.min(20, Math.max(0, frac - Number(exponent ?? 0)));
+  return Math.min(100, Math.max(0, frac - Number(exponent ?? 0)));
 }
+
+const SETTLE_STEPS = 4;
+export const UNBINNABLE = "These values span too wide or too narrow a range to bin";
 
 function clean(value, width) {
   if (Math.abs(value) < Math.abs(width) * 1e-9) return 0;
-  return Number(value.toPrecision(15));
+  const rounded = Number(value.toPrecision(15));
+  return Math.abs(rounded - value) <= Math.abs(width) * 1e-6 ? rounded : value;
+}
+
+function resolvable(min, max, width) {
+  const magnitude = Math.max(Math.abs(min), Math.abs(max));
+  return (
+    Number.isFinite(max - min) &&
+    Number.isFinite(width) &&
+    width > 0 &&
+    width > magnitude * Number.EPSILON * 4
+  );
+}
+
+function soundLayout({ count, edge }, min, max) {
+  if (!(count >= 1 && count <= MAX_BINS)) return false;
+  let previous = edge(0);
+  if (!(previous <= min)) return false;
+  for (let i = 1; i <= count; i += 1) {
+    const next = edge(i);
+    if (!Number.isFinite(next) || !(next > previous)) return false;
+    previous = next;
+  }
+  return previous >= max && Number.isFinite(previous - edge(0));
 }
 
 function spanOver(min, max, n) {
@@ -52,17 +79,17 @@ function alignedEdges(min, max, width, anchor) {
   let count = Math.max(1, Math.ceil(max / width - at(k0) / width));
   if (!Number.isFinite(k0) || !Number.isFinite(count)) return { count: Infinity };
   if (count > MAX_BINS + 2) return { count };
-  while (at(k0) > min) {
+  for (let n = 0; n < SETTLE_STEPS && at(k0) > min; n += 1) {
     k0 -= 1;
     count += 1;
   }
-  while (at(k0 + 1) <= min) {
+  for (let n = 0; n < SETTLE_STEPS && at(k0 + 1) <= min; n += 1) {
     k0 += 1;
     count -= 1;
   }
   count = Math.max(1, count);
-  while (count > 1 && at(k0 + count - 1) >= max) count -= 1;
-  while (at(k0 + count) < max) count += 1;
+  for (let n = 0; n < SETTLE_STEPS && count > 1 && at(k0 + count - 1) >= max; n += 1) count -= 1;
+  for (let n = 0; n < SETTLE_STEPS && at(k0 + count) < max; n += 1) count += 1;
   return { count, width, edge: (i) => at(k0 + i) };
 }
 
@@ -95,18 +122,25 @@ export function binValues(values, { bins, bin_width: binWidth, bin_start: binSta
   summary.max = max;
 
   let layout = null;
+  const unbinnable = () => {
+    summary.unbinnable = true;
+    return summary;
+  };
+  const anchor = Number.isFinite(binStart) ? binStart : 0;
   if (binWidth > 0) {
-    const aligned = alignedEdges(min, max, binWidth, Number.isFinite(binStart) ? binStart : 0);
+    if (min !== max && !resolvable(min, max, binWidth)) return unbinnable();
+    const aligned = alignedEdges(min, max, binWidth, anchor);
     if (aligned.count <= MAX_BINS) {
       layout = aligned;
       summary.mode = "width";
       summary.width = binWidth;
+      summary.digits = Math.max(decimalsOf(binWidth), decimalsOf(anchor));
     } else {
       summary.tooMany = aligned.count;
     }
   }
   const autoWidth = min === max ? 0 : niceStep(spanOver(min, max, autoCount(included.length)));
-  if (!layout && !(autoWidth > 0 && Number.isFinite(autoWidth))) {
+  if (!layout && min === max) {
     summary.bins = [{ lo: min, hi: max, count: included.length, last: true }];
     summary.mode = summary.tooMany ? "auto" : bins ? "count" : "auto";
     return summary;
@@ -114,15 +148,20 @@ export function binValues(values, { bins, bin_width: binWidth, bin_start: binSta
   if (!layout && Number.isInteger(bins) && bins >= 1 && !summary.tooMany) {
     const count = Math.min(bins, MAX_BINS);
     const width = spanOver(min, max, count);
+    if (!resolvable(min, max, width)) return unbinnable();
     const edge = (i) => (i === 0 ? min : i === count ? max : clean(min + i * width, width));
     layout = { count, width, edge };
     summary.mode = "count";
     summary.width = width;
+    summary.digits = decimalsOf(niceStep(width)) + 2;
   }
   if (!layout) {
+    if (!resolvable(min, max, autoWidth)) return unbinnable();
     layout = alignedEdges(min, max, autoWidth, 0);
     summary.width = autoWidth;
+    summary.digits = decimalsOf(autoWidth);
   }
+  if (!soundLayout(layout, min, max)) return unbinnable();
 
   const { count, width, edge } = layout;
   const first = edge(0);
@@ -146,8 +185,16 @@ export function binValues(values, { bins, bin_width: binWidth, bin_start: binSta
 
 const CURRENCY_CODE = /^[A-Z]{3}$/;
 
+const MAX_FRACTION_DIGITS = 20;
+
 function numberText(value, fmt, digits, compact = false) {
   const { locale, currency } = formatSettings();
+  if (digits > MAX_FRACTION_DIGITS) {
+    return new Intl.NumberFormat(locale, {
+      notation: "scientific",
+      maximumFractionDigits: 6,
+    }).format(value);
+  }
   const notation = compact ? "compact" : "standard";
   if (fmt === "currency" || CURRENCY_CODE.test(fmt)) {
     try {
@@ -171,9 +218,9 @@ function numberText(value, fmt, digits, compact = false) {
   return new Intl.NumberFormat(locale, { notation, maximumFractionDigits: digits }).format(value);
 }
 
-export function binLabel(bin, fmt) {
+export function binLabel(bin, fmt, digits) {
   if (bin.lo === bin.hi) return formatValue(bin.lo, fmt);
-  const step = decimalsOf(niceStep(Math.abs(bin.hi - bin.lo) || Number.MIN_VALUE)) + 2;
+  const step = digits ?? decimalsOf(niceStep(Math.abs(bin.hi - bin.lo) || Number.MIN_VALUE)) + 2;
   const text = (v) => {
     const shown = fmt === "compact" ? formatValue(v, fmt) : null;
     return shown ?? numberText(v, fmt, Math.min(decimalsOf(v), step));
@@ -194,20 +241,24 @@ export function edgeLabel(value, fmt, interval = 0) {
   return numberText(value, fmt, Math.max(big ? 1 : 2, fine), big);
 }
 
+function countText(n) {
+  return n.toLocaleString(formatSettings().locale);
+}
+
 export function histogramScope(summary, result, { full = false } = {}) {
   const parts = [];
   if (result.truncated && full) {
-    parts.push(`first ${result.row_count.toLocaleString()} rows only, not the full distribution`);
+    parts.push(`first ${countText(result.row_count)} rows only, not the full distribution`);
   }
-  parts.push(`${summary.included.toLocaleString()} ${summary.included === 1 ? "value" : "values"}`);
+  parts.push(`${countText(summary.included)} ${summary.included === 1 ? "value" : "values"}`);
   if (summary.nulls) {
-    parts.push(`${summary.nulls.toLocaleString()} ${summary.nulls === 1 ? "null" : "nulls"} excluded`);
+    parts.push(`${countText(summary.nulls)} ${summary.nulls === 1 ? "null" : "nulls"} excluded`);
   }
   if (summary.nonNumeric) {
-    parts.push(`${summary.nonNumeric.toLocaleString()} non-numeric excluded`);
+    parts.push(`${countText(summary.nonNumeric)} non-numeric excluded`);
   }
   if (summary.tooMany) {
-    parts.push(`bin_width would make ${summary.tooMany.toLocaleString()} bins, auto bins shown`);
+    parts.push(`bin_width would make ${countText(summary.tooMany)} bins, auto bins shown`);
   }
   const text = parts.join(" · ");
   return text.charAt(0).toUpperCase() + text.slice(1);
@@ -252,6 +303,7 @@ export function histogramOption(spec, result, forcedColor, height = 0) {
   const color = forcedColor || cssVar("--series-1");
   const total = summary.included;
   const extent = axisExtent(summary);
+  if (summary.unbinnable) setEmptyReason(option, UNBINNABLE);
 
   option.color = [color];
   option.grid.top = compact ? 22 : 34;
@@ -284,8 +336,8 @@ export function histogramOption(spec, result, forcedColor, height = 0) {
     const share = total ? bin.count / total : 0;
     return (
       `<div style="font-weight:600;margin-bottom:4px">${escapeHtml(humanize(spec.x))} ` +
-      `${escapeHtml(binLabel(bin, xFormat))}</div>` +
-      `${p.marker} ${escapeHtml(bin.count.toLocaleString())} ` +
+      `${escapeHtml(binLabel(bin, xFormat, summary.digits))}</div>` +
+      `${p.marker} ${escapeHtml(countText(bin.count))} ` +
       `${bin.count === 1 ? "row" : "rows"}` +
       `&nbsp;<span style="opacity:.6">${escapeHtml(formatValue(share, "percent"))}</span>` +
       `<div style="margin-top:6px;font-size:11px;opacity:.6">` +
