@@ -500,16 +500,27 @@ def _in_order(value: Any) -> Any:
 
 
 def _replace_key(mapping: CommentedMap, key: str, value: Any) -> None:
-    """Set or (for None) delete a key whose old value may be a block, keeping the
-    comment lines ruamel hung on the block's deepest entry: they belong to
-    whatever comes after the mapping, usually the next tile."""
-    trailing = _take_trailing(mapping)
+    """Set or (for None) delete a key, moving the comment lines that follow its
+    old value to follow the new one. ruamel keeps the lines after a value on
+    that value's deepest last entry, and they belong to whatever comes next: the
+    following key, or the next tile."""
+    if key not in mapping:
+        if value is not None:
+            _put_key(mapping, key, value)
+        return
+    old = mapping[key]
+    parts = [c for c in (_take_trailing(old), _detach_after(mapping, key, 2, old)) if c]
+    comment = (
+        _Comment([line for c in parts for line in c.lines], parts[0].column) if parts else None
+    )
     if value is None:
-        if key in mapping:
-            _delete_key(mapping, key)
-    else:
-        mapping[key] = value
-    _give_trailing(mapping, trailing)
+        if comment is not None:
+            _attach_after(mapping, key, 2, old, comment)
+        _delete_key(mapping, key)
+        return
+    mapping[key] = value
+    if comment is not None:
+        _attach_after(*(_trailing_slot(value) or (mapping, key, 2, value)), comment)
 
 
 def _tile_model(raw: CommentedMap) -> Tile | None:

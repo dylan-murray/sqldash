@@ -1819,6 +1819,8 @@ def _dry_run_metric_tiles(
                 grain=tile.metric.grain,
                 limit=1,
             )
+        except ConnectorError:
+            continue
         except (SemanticError, ValueError) as exc:
             if not inline and not _metric_tile_query_already_linted(tile, resolved.definition):
                 errors.append(f"tile '{tile.id}': metric does not compile — {exc}")

@@ -59,6 +59,11 @@ function valueText(value, type, column) {
   return { text: type === "number" ? numberText(text.trim()) : text };
 }
 
+export function optionText(raw, text, options) {
+  if (typeof raw !== "boolean" || !options) return text;
+  return options.find((option) => option.toLowerCase() === text) ?? text;
+}
+
 export function drillUrl(plan, row, columns, context) {
   if (!plan.href) return { error: "this drill has no dashboard to open" };
   const url = new URL(plan.href, "http://sqldash.invalid");
@@ -78,7 +83,7 @@ export function drillUrl(plan, row, columns, context) {
       if (at < 0) return { error: `column '${param.column}' is not in this tile's result` };
       const value = valueText(row?.[at], param.type, param.column);
       if (value.error) return { error: value.error };
-      text = value.text;
+      text = optionText(row[at], value.text, param.options);
     }
     if (param.options && !param.options.includes(text)) {
       return { error: `'${text}' is not one of the options of ${plan.title}'s ${param.param} filter` };

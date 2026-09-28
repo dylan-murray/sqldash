@@ -3,6 +3,7 @@ what lint reports about it, and what the dashboard page hands the browser."""
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import NoSuchModuleError
 
 from sqldash.execution import ExecutionRegistry
 from sqldash.lint import lint_project, validate_dashboard
@@ -405,20 +406,53 @@ def test_the_tile_api_writes_a_new_drill_and_replaces_or_removes_one(client, tmp
     assert "    drill:\n      dashboard: detail\n" in text
 
 
-@pytest.mark.parametrize("last", ["", "        period: {filter: dates}\n"])
-@pytest.mark.parametrize(
-    "drill", ["detail", None, {"dashboard": "detail", "column": "customer_id"}]
-)
-def test_rewriting_a_drill_that_ends_a_tile_keeps_the_next_tiles_comment(tmp_path, drill, last):
-    text = (
-        OVERVIEW.replace("        period: {filter: dates}\n", last)
+OLD_DRILLS = {
+    "block": "    drill:\n      dashboard: detail\n      filters:\n        customer: customer\n",
+    "block_flow_leaf": (
+        "    drill:\n      dashboard: detail\n      filters:\n        period: {filter: dates}\n"
+    ),
+    "flow": "    drill: {dashboard: detail, filters: {customer: customer}}\n",
+    "scalar": "    drill: detail\n",
+}
+NEW_DRILLS = {
+    "block": (
+        {"dashboard": "detail", "filters": {"customer_id": "customer_id"}},
+        "    drill:\n      dashboard: detail\n      filters:\n        customer_id: customer_id\n",
+    ),
+    "flow_leaf": (
+        {"dashboard": "detail", "filters": {"period": {"filter": "dates"}}},
+        "    drill:\n      dashboard: detail\n      filters:\n        period: {filter: dates}\n",
+    ),
+    "scalar": ("overview", "    drill: overview\n"),
+    "removed": (None, ""),
+}
+
+
+def _drill_file(drill: str, where: str) -> str:
+    sql = "    sql: \"SELECT 'acme' AS customer, 7 AS customer_id, 10 AS revenue\"\n"
+    note = "\n    # This note describes the chart\n"
+    if where == "middle":
+        body = "  - title: By customer\n" + drill + note + "    chart: bar\n" + sql
+    else:
+        body = "  - title: By customer\n    chart: bar\n" + sql + drill
+    head = OVERVIEW[: OVERVIEW.index("tiles:\n") + len("tiles:\n")]
+    return (
+        head
+        + body
         + "\n  # This note describes the next tile\n  - {title: Next, sql: 'SELECT 1 AS n'}\n"
     )
-    store = _project(tmp_path, overview=text, detail=DETAIL)
+
+
+@pytest.mark.parametrize("where", ["middle", "last"])
+@pytest.mark.parametrize("new", list(NEW_DRILLS))
+@pytest.mark.parametrize("old", list(OLD_DRILLS))
+def test_rewriting_a_drill_changes_only_the_drill_lines(tmp_path, old, new, where):
+    before = _drill_file(OLD_DRILLS[old], where)
+    value, lines = NEW_DRILLS[new]
+    store = _project(tmp_path, overview=before, detail=DETAIL)
     tile = {"id": "by_customer", "title": "By customer", "query": "by_customer", "chart": "bar"}
-    store.upsert_tile("overview", {**tile, "drill": drill}, None, store.load("overview")[2])
-    written = (tmp_path / "overview.yaml").read_text()
-    assert "\n\n  # This note describes the next tile\n  - {title: Next" in written, written
+    store.upsert_tile("overview", {**tile, "drill": value}, None, store.load("overview")[2])
+    assert (tmp_path / "overview.yaml").read_text() == _drill_file(lines, where)
 
 
 def test_reordering_a_drills_filters_is_saved_since_the_first_one_holds_the_link(tmp_path):
@@ -431,3 +465,39 @@ def test_reordering_a_drills_filters_is_saved_since_the_first_one_holds_the_link
     store.upsert_tile("overview", {**tile, "drill": drill}, None, store.load("overview")[2])
     saved = store.load("overview")[0].tiles[0].drill
     assert list(saved.filters) == ["period", "customer"]
+
+
+def test_an_inline_metric_tile_on_a_missing_dialect_still_gets_a_report(tmp_path, monkeypatch):
+    def missing(url, *args, **kwargs):
+        raise NoSuchModuleError(f"Can't load plugin: sqlalchemy.dialects:{str(url).split(':')[0]}")
+
+    monkeypatch.setattr("sqldash.lint.create_engine", missing)
+    monkeypatch.setattr("sqldash.connectors.engine.create_engine", missing)
+    store = _project(tmp_path)
+    text = (
+        "title: Lake\nsource: {type: trino, host: h, database: hive}\n"
+        "relations:\n  orders: {table: orders}\n"
+        "metrics:\n  revenue: {relation: orders, expr: SUM(amount)}\n"
+        "tiles:\n  - {title: Revenue, metric: revenue}\n"
+    )
+    registry = ExecutionRegistry(max_workers=1)
+    try:
+        payload = validate_dashboard(
+            text, store=store, layer=SemanticLayer(store), registry=registry, name="lake"
+        )
+    finally:
+        registry.shutdown()
+    assert payload["sql_checked"] is True, payload
+    assert any("dialect package installed" in w for w in payload["lint"]), payload
+
+
+def test_boolean_options_reach_the_plan_as_the_filter_bar_renders_them(tmp_path):
+    detail = DETAIL.replace("options: [all, gold, silver]", "options: [true, false]")
+    store = _project(
+        tmp_path,
+        overview=_with_drill("{dashboard: detail, filters: {tier: customer}}"),
+        detail=detail,
+    )
+    dashboard, _, _ = store.load("overview")
+    plan = plan_drill(store, "overview", dashboard, dashboard.tiles[0])
+    assert plan["params"][0]["options"] == ["all", "True", "False"]

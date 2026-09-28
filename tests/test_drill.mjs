@@ -149,3 +149,14 @@ test("a number is sent the way a number input takes it, and a date must be on th
   assert.match(one("date", "2026-02-31").error, /not a date/);
   assert.match(one("date", "2026-13-01").error, /not a date/);
 });
+
+test("a boolean cell drills into the option its filter bar renders for it", () => {
+  const flags = plan([{ param: "active", type: "select", column: "active", options: ["all", "True", "False"] }]);
+  const columns = [{ name: "active", type: "boolean" }];
+  const sent = (value) => new URL(drillUrl(flags, [value], columns, context).href, "http://x");
+  assert.equal(sent(true).searchParams.get("f_active"), "True");
+  assert.equal(sent(false).searchParams.get("f_active"), "False");
+  const text = plan([{ param: "active", type: "text", column: "active" }]);
+  const href = drillUrl(text, [true], columns, context).href;
+  assert.equal(new URL(href, "http://x").searchParams.get("f_active"), "true");
+});
