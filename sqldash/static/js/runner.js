@@ -17,6 +17,7 @@ import {
   followDrill,
   initDrillCrumb,
   markDrillTile,
+  refreshDrillLinks,
   rowForPoint,
   tableDrillCells,
 } from "/static/js/drill.js";
@@ -779,6 +780,7 @@ function queueFilterRun(paramName) {
     }
     pendingParams.clear();
     syncFiltersToUrl();
+    refreshDrillLinks();
     runTiles([...affected.values()]);
   }, 60);
 }

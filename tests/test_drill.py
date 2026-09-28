@@ -403,3 +403,31 @@ def test_the_tile_api_writes_a_new_drill_and_replaces_or_removes_one(client, tmp
     assert next(t for t in tiles if t["id"] == "linked")["drill"] is None
     text = (tmp_path / "overview.yaml").read_text()
     assert "    drill:\n      dashboard: detail\n" in text
+
+
+@pytest.mark.parametrize("last", ["", "        period: {filter: dates}\n"])
+@pytest.mark.parametrize(
+    "drill", ["detail", None, {"dashboard": "detail", "column": "customer_id"}]
+)
+def test_rewriting_a_drill_that_ends_a_tile_keeps_the_next_tiles_comment(tmp_path, drill, last):
+    text = (
+        OVERVIEW.replace("        period: {filter: dates}\n", last)
+        + "\n  # This note describes the next tile\n  - {title: Next, sql: 'SELECT 1 AS n'}\n"
+    )
+    store = _project(tmp_path, overview=text, detail=DETAIL)
+    tile = {"id": "by_customer", "title": "By customer", "query": "by_customer", "chart": "bar"}
+    store.upsert_tile("overview", {**tile, "drill": drill}, None, store.load("overview")[2])
+    written = (tmp_path / "overview.yaml").read_text()
+    assert "\n\n  # This note describes the next tile\n  - {title: Next" in written, written
+
+
+def test_reordering_a_drills_filters_is_saved_since_the_first_one_holds_the_link(tmp_path):
+    store = _project(tmp_path, overview=OVERVIEW, detail=DETAIL)
+    tile = {"id": "by_customer", "title": "By customer", "query": "by_customer", "chart": "bar"}
+    drill = {
+        "dashboard": "detail",
+        "filters": {"period": {"filter": "dates"}, "customer": "customer"},
+    }
+    store.upsert_tile("overview", {**tile, "drill": drill}, None, store.load("overview")[2])
+    saved = store.load("overview")[0].tiles[0].drill
+    assert list(saved.filters) == ["period", "customer"]

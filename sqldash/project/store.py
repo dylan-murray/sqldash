@@ -15,7 +15,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 from ruamel.yaml.composer import ComposerError
@@ -489,6 +489,29 @@ def _drill_node(value: Any) -> Any:
     return node
 
 
+def _in_order(value: Any) -> Any:
+    """A model or mapping as nested (key, value) pairs, so equality sees key
+    order: the first mapping entry decides which column a click reads."""
+    if isinstance(value, BaseModel):
+        value = value.model_dump()
+    if isinstance(value, dict):
+        return [(k, _in_order(v)) for k, v in value.items()]
+    return value
+
+
+def _replace_key(mapping: CommentedMap, key: str, value: Any) -> None:
+    """Set or (for None) delete a key whose old value may be a block, keeping the
+    comment lines ruamel hung on the block's deepest entry: they belong to
+    whatever comes after the mapping, usually the next tile."""
+    trailing = _take_trailing(mapping)
+    if value is None:
+        if key in mapping:
+            _delete_key(mapping, key)
+    else:
+        mapping[key] = value
+    _give_trailing(mapping, trailing)
+
+
 def _tile_model(raw: CommentedMap) -> Tile | None:
     try:
         return Tile.model_validate(dict(raw))
@@ -908,12 +931,8 @@ def _edit_tile_in_place(
 
     if "drill" in tile:
         wanted = None if tile["drill"] is None else DrillSpec.model_validate(tile["drill"])
-        if current is None or current.drill != wanted:
-            if wanted is None:
-                if "drill" in existing:
-                    _delete_key(existing, "drill")
-            else:
-                _put_key(existing, "drill", _drill_node(tile["drill"]))
+        if current is None or _in_order(current.drill) != _in_order(wanted):
+            _replace_key(existing, "drill", None if wanted is None else _drill_node(tile["drill"]))
 
     wrote_position = False
     pos = tile.get("position")

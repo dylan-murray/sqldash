@@ -344,9 +344,30 @@ def test_a_table_link_the_current_filters_make_invalid_does_not_open_its_old_hre
     assert parse_qs(urlparse(link.get_attribute("href")).query)["f_region"] == ["us"]
     page.select_option('select[data-filter="region"]', "apac")
     page.wait_for_function("() => location.search.includes('f_region=apac')")
+    page.wait_for_function(
+        """() => !document.querySelector('.tile[data-tile-id="keys"] a.cell-link')
+            .hasAttribute('href')"""
+    )
     link.hover()
     link.click()
     page.wait_for_selector(".toast-error")
     assert "'apac' is not one of the options" in page.locator(".toast-error").first.text_content()
     page.wait_for_timeout(300)
     assert "/d/stale" in page.url
+
+
+def test_a_table_link_invalid_on_load_works_once_the_filters_make_it_valid(page, edges):
+    page.goto(f"{edges}/d/stale?f_region=apac")
+    _wait_tiles(page)
+    link = page.locator('.tile[data-tile-id="keys"] a.cell-link').first
+    assert link.get_attribute("href") is None
+    assert "'apac' is not one of the options" in link.evaluate("a => a.closest('td').title")
+    page.select_option('select[data-filter="region"]', "eu")
+    page.wait_for_function(
+        """() => (document.querySelector('.tile[data-tile-id="keys"] a.cell-link')
+            .getAttribute('href') || '').includes('f_region=eu')"""
+    )
+    link.focus()
+    page.keyboard.press("Enter")
+    page.wait_for_url("**/d/stale_dest?**")
+    assert _query(page)["f_region"] == "eu"

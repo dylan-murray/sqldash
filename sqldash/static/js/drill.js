@@ -119,6 +119,7 @@ export function markDrillTile(el, plan) {
 
 export function tableDrillCells(plan, result, context, notify) {
   if (!plan || plan.errors.length) return undefined;
+  refreshDrillLinks();
   const column = plan.column ?? result.columns[0]?.name;
   const at = result.columns.findIndex((c) => c.name === column);
   if (at < 0) {
@@ -127,43 +128,60 @@ export function tableDrillCells(plan, result, context, notify) {
   }
   return (td, row, index) => {
     if (index !== at) return;
-    const { href, error } = drillUrl(plan, row, result.columns, context());
-    if (!href) {
-      td.title = error;
-      return;
-    }
     const link = document.createElement("a");
     link.className = "cell-link";
-    link.href = href;
-    const refresh = () => {
-      const next = drillUrl(plan, row, result.columns, context());
-      if (next.href) link.href = next.href;
-      td.title = next.href ? `Open ${plan.title}` : next.error;
-      return next;
-    };
-    for (const type of ["pointerenter", "pointerdown", "focus"]) link.addEventListener(type, refresh);
     if (plan.new_tab) {
       link.target = "_blank";
       link.rel = "noopener";
     }
-    link.append(...td.childNodes);
-    const guard = (e) => {
-      e.stopPropagation();
-      const { href, error } = refresh();
-      if (href) return;
-      e.preventDefault();
-      notify(error);
+    const refresh = () => {
+      const next = drillUrl(plan, row, result.columns, context());
+      if (next.href) {
+        link.href = next.href;
+        link.removeAttribute("tabindex");
+        link.removeAttribute("role");
+      } else {
+        link.removeAttribute("href");
+        link.tabIndex = 0;
+        link.setAttribute("role", "link");
+      }
+      td.title = next.href ? `Open ${plan.title}` : next.error;
+      return next;
     };
-    link.addEventListener("click", guard);
+    const guard = (e, newTab = false) => {
+      e.stopPropagation();
+      const linked = link.hasAttribute("href");
+      const { href, error } = refresh();
+      if (href && linked) return;
+      e.preventDefault();
+      if (href) followDrill(plan, href, newTab || e.metaKey || e.ctrlKey);
+      else notify(error);
+    };
+    for (const type of ["pointerenter", "pointerdown", "focus"]) link.addEventListener(type, refresh);
+    link.addEventListener("click", (e) => guard(e));
     link.addEventListener("auxclick", (e) => {
-      if (e.button === 1) guard(e);
+      if (e.button === 1) guard(e, true);
     });
-    link.addEventListener("keydown", (e) => e.stopPropagation());
+    link.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter" && !link.hasAttribute("href")) guard(e);
+    });
+    liveLinks.add({ link, refresh });
+    link.append(...td.childNodes);
     td.replaceChildren(link);
     td.classList.add("has-link");
     td.tabIndex = -1;
-    td.title = `Open ${plan.title}`;
+    refresh();
   };
+}
+
+const liveLinks = new Set();
+
+export function refreshDrillLinks() {
+  for (const entry of liveLinks) {
+    if (entry.link.isConnected) entry.refresh();
+    else liveLinks.delete(entry);
+  }
 }
 
 function pointAt(chart, seriesIndex, dataIndex) {
