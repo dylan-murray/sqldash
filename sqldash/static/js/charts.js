@@ -278,11 +278,13 @@ export function formatValue(value, format, compact = false) {
   const { locale } = formatConfig;
   if (format === "currency" || CURRENCY_CODE.test(format)) {
     const currency = CURRENCY_CODE.test(format) ? format : formatConfig.currency;
+    const notation = compact || Math.abs(num) >= 1_000_000 ? "compact" : "standard";
     try {
       return new Intl.NumberFormat(locale, {
         style: "currency",
         currency,
-        notation: compact || Math.abs(num) >= 1_000_000 ? "compact" : "standard",
+        notation,
+        minimumFractionDigits: notation === "compact" ? 0 : undefined,
         maximumFractionDigits: Math.abs(num) >= 1000 ? (compact ? 1 : 0) : 2,
       }).format(amount);
     } catch {
@@ -590,6 +592,8 @@ function xyOption(spec, result, forcedColor, height = 0, width = 0) {
     if (combo) {
       common.name = combo.names[i];
       common.yAxisIndex = combo.axes[i];
+    }
+    if (combo || (s.column && spec.format?.[s.column])) {
       const format = seriesFormat(spec, s.column);
       common.tooltip = { valueFormatter: (v) => formatValue(v, format) };
     }
@@ -1040,6 +1044,12 @@ export function cleanCombo(spec) {
     if (entry.axis === "right") next.axis = "right";
     if (entry.label) next.label = entry.label;
     if (Object.keys(next).length) series[column] = next;
+  }
+  if (ys.size && [...ys].every((column) => series[column]?.axis === "right")) {
+    for (const column of ys) {
+      delete series[column].axis;
+      if (!Object.keys(series[column]).length) delete series[column];
+    }
   }
   if (Object.keys(series).length) out.series = series;
   const onRight = Object.values(series).some((entry) => entry.axis === "right");

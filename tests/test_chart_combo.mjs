@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { cleanCombo, pruneSpecForType, setFormatConfig, translate } from "../sqldash/static/js/charts.js";
+import {
+  cleanCombo,
+  formatValue,
+  pruneSpecForType,
+  setFormatConfig,
+  translate,
+} from "../sqldash/static/js/charts.js";
 
 setFormatConfig({ locale: "en-US" });
 globalThis.document = { documentElement: {} };
@@ -124,4 +130,37 @@ test("cleanCombo writes only the settings that change something", () => {
     {}
   );
   assert.deepEqual(cleanCombo({ ...combo, group_by: "week" }), {});
+});
+
+test("compact currency drops trailing zeros on every Node, not only on newer engines", () => {
+  assert.equal(formatValue(20000, "currency", true), "$20K");
+  assert.equal(formatValue(21500, "currency", true), "$21.5K");
+  assert.equal(formatValue(0, "currency", true), "$0");
+  assert.equal(formatValue(12.5, "currency"), "$12.50");
+});
+
+test("per-series formats reach the tooltip without marks or a second axis", () => {
+  const option = translate(
+    { type: "bar", x: "week", y: ["revenue", "rate"], format: { revenue: "currency", rate: "percent" } },
+    weekly
+  );
+  assert.ok(!Array.isArray(option.yAxis));
+  assert.equal(option.series[0].tooltip.valueFormatter(51000), "$51,000");
+  assert.equal(option.series[1].tooltip.valueFormatter(0.125), "12.5%");
+});
+
+test("a chart whose only series are on the right comes back to the left axis", () => {
+  assert.deepEqual(
+    cleanCombo({
+      type: "bar",
+      y: ["rate"],
+      series: { rate: { type: "line", axis: "right" } },
+      axes: { right: { title: "Rate" } },
+    }),
+    { series: { rate: { type: "line" } } }
+  );
+  assert.deepEqual(
+    cleanCombo({ type: "line", y: ["rate"], series: { rate: { axis: "right" } } }),
+    {}
+  );
 });

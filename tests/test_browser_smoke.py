@@ -7516,3 +7516,37 @@ def test_combo_chart_draws_two_axes_and_the_builder_saves_it(page, tmp_path_fact
         assert tile == {"yAxes": 2, "right": "50%", "left": "$50K"}, tile
     finally:
         _stop_server(server, thread, page)
+
+
+def test_dropping_the_last_left_series_in_the_builder_saves_a_valid_chart(page, tmp_path_factory):
+    root = tmp_path_factory.mktemp("comboleft")
+    (root / "d.yaml").write_text(
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        "tiles:\n"
+        "  - title: T\n"
+        "    chart:\n"
+        "      type: bar\n"
+        "      x: w\n"
+        "      y: [revenue, rate]\n"
+        "      series: {rate: {type: line, axis: right}}\n"
+        "      axes: {right: {title: Rate}}\n"
+        "    sql: \"SELECT w, revenue, rate FROM (VALUES ('a', 50000, 0.25), ('b', 60000, 0.3))"
+        ' t(w, revenue, rate)"\n'
+    )
+    app = create_app(root, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    try:
+        page.goto(f"http://127.0.0.1:{port}/d/d/query?tile=t", wait_until="load")
+        page.click("#run-btn")
+        page.wait_for_selector("#qb-preview canvas")
+        page.locator('[data-spec-y][value="revenue"]').uncheck()
+        page.click("#qb-add")
+        page.wait_for_url("**/d/d?edit=1")
+        store = DashboardStore(root)
+        dashboard, _, _ = store.load("d")
+        chart = dashboard.tiles[0].chart
+        assert chart.y == ["rate"], (root / "d.yaml").read_text()
+        assert all(s.axis != "right" for s in chart.series.values()), (root / "d.yaml").read_text()
+        assert "right" not in chart.axes, (root / "d.yaml").read_text()
+    finally:
+        _stop_server(server, thread, page)

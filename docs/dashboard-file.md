@@ -257,7 +257,9 @@ single-axis chart.
 not by column); on a horizontal bar; on a metric tile with `compare`; a series key
 that is not in `y`; every column on the right axis; and `axes.right` with nothing on
 it. The chart builder shows a Series section once two or more y columns are picked,
-with the mark, axis, format and legend name per column and the axis titles.
+with the mark, axis, format and legend name per column and the axis titles. Unticking
+columns until only right-axis series are left moves them back to the left axis, so
+the builder never saves a chart lint rejects.
 
 ## Relative dates
 
