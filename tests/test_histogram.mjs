@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { pruneSpecForType } from "../sqldash/static/js/charts.js";
-import { binLabel, binValues, histogramScope, MAX_BINS } from "../sqldash/static/js/histogram.js";
+import {
+  binLabel,
+  binValues,
+  edgeLabel,
+  histogramScope,
+  MAX_BINS,
+} from "../sqldash/static/js/histogram.js";
 
 const edges = (summary) => summary.bins.map((b) => [b.lo, b.hi, b.count]);
 const total = (summary) => summary.bins.reduce((n, b) => n + b.count, 0);
@@ -103,15 +109,58 @@ test("huge ranges still bin", () => {
   assert.ok(summary.bins.length <= 40);
 });
 
-test("the scope line leads with truncation and names what was left out", () => {
+test("the scope line names what was left out and leaves truncation to the tile note", () => {
   const summary = binValues([1, 2, null, "x"], {});
   const scope = histogramScope(summary, { truncated: true, row_count: 4 });
-  assert.equal(scope, "First 4 rows only · 2 values · 1 null excluded · 1 non-numeric excluded");
+  assert.equal(scope, "2 values · 1 null excluded · 1 non-numeric excluded");
   assert.match(
     histogramScope(summary, { truncated: true, row_count: 4 }, { full: true }),
-    /not the full distribution/
+    /^First 4 rows only, not the full distribution/
   );
-  assert.equal(histogramScope(summary, { truncated: false }), "2 values · 1 null excluded · 1 non-numeric excluded");
+  const nulls = binValues([1, null, null], {});
+  assert.equal(histogramScope(nulls, { truncated: false }), "1 value · 2 nulls excluded");
+});
+
+test("a value just past an edge opens the next bin instead of being rounded into the last", () => {
+  assert.deepEqual(edges(binValues([0, 10, 10.01], { bin_width: 10 })), [
+    [0, 10, 1],
+    [10, 20, 2],
+  ]);
+  const auto = binValues([0, 1000.01], {});
+  assert.ok(auto.bins.at(-1).hi >= 1000.01, JSON.stringify(edges(auto)));
+  assert.equal(total(auto), 2);
+});
+
+test("bins: N edges are clean decimals and stay lower-inclusive", () => {
+  const summary = binValues([0, 0.3, 1], { bins: 10 });
+  assert.equal(summary.bins[3].lo, 0.3);
+  assert.equal(summary.bins[3].count, 1);
+  assert.equal(summary.bins[2].count, 0);
+  assert.ok(summary.bins.every((b) => String(b.lo).length < 6), JSON.stringify(edges(summary)));
+});
+
+test("fine bins get labels precise enough to tell them apart", () => {
+  const summary = binValues([1, 1.001, 1.002], { bin_width: 0.001 });
+  assert.deepEqual(
+    summary.bins.map((b) => binLabel(b, "number")),
+    ["1 to under 1.001", "1.001 to 1.002"]
+  );
+  assert.equal(edgeLabel(1.001, "number", 0.001), "1.001");
+});
+
+test("tiny values bin across their own range", () => {
+  const summary = binValues([1e-18, 2e-18], {});
+  assert.ok(summary.bins.length > 1);
+  assert.ok(summary.bins.every((b) => b.hi > b.lo));
+  assert.equal(summary.bins[0].count, 1);
+  assert.equal(summary.bins.at(-1).count, 1);
+});
+
+test("endpoints near the float limit bin without overflowing", () => {
+  const summary = binValues([-1e308, 1e308], {});
+  assert.equal(total(summary), 2);
+  assert.ok(summary.bins.length <= 40);
+  assert.equal(total(binValues([-1e308, 1e308], { bins: 4 })), 2);
 });
 
 test("interval labels say which edge is included", () => {

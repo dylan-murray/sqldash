@@ -88,8 +88,8 @@ counted as zero, and the line above the chart says how many rows were binned and
 how many were left out. The bin counts always add up to that number.
 
 Binning happens in the browser, over the rows the query returned. When the row
-cap cut the result short, the chart says it binned only the first rows and is not
-the full distribution. To bin a table bigger than the cap, raise it with
+cap cut the result short, the note under the chart says so, and each bar's
+tooltip adds that the bins cover only those first rows, not the full distribution. To bin a table bigger than the cap, raise it with
 `sqldash serve --row-limit`, or bucket in SQL and draw a `bar` chart. The CSV
 download is always the raw rows, not the bins.
 

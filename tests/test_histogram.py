@@ -160,10 +160,23 @@ def test_histograms_render_real_duckdb_distributions(tmp_path):
                     const option = echarts.getInstanceByDom(mount).getOption();
                     return [tile.dataset.tileId, {
                         bins: option.series[0].data,
-                        scope: option.graphic[0].elements[0].style.text,
+                        scope: option.series[1].data[0][0],
+                        ticks: option.xAxis[0].axisLabel.customValues ?? null,
                         note: tile.querySelector('.truncated-note')?.textContent ?? null,
                     }];
                 }))""")
+            page.set_viewport_size({"width": 390, "height": 1000})
+            page.wait_for_timeout(800)
+            narrow = page.evaluate("""() => {
+                const mount = document.querySelector('[data-tile-id="mixed"] .chart-mount');
+                const chart = echarts.getInstanceByDom(mount);
+                const scope = chart.getZr().storage.getDisplayList()
+                    .filter(e => (e.style?.text ?? '').startsWith('7 value'));
+                return {
+                    width: chart.getWidth(),
+                    texts: scope.map(e => [e.style.text, e.x + e.getBoundingRect().width]),
+                };
+            }""")
             browser.close()
     finally:
         server.should_exit = True
@@ -176,13 +189,19 @@ def test_histograms_render_real_duckdb_distributions(tmp_path):
         [10, 20, 1],
         [20, 30, 1],
     ], state["mixed"]
-    assert state["mixed"]["scope"] == "7 values · 2 null excluded"
+    assert state["mixed"]["scope"] == "7 values · 2 nulls excluded"
     assert state["constant"]["bins"] == [[7, 7, 12]]
     skewed = state["skewed"]["bins"]
     assert len(skewed) == 20
     assert sum(b[2] for b in skewed) == pytest.approx(1)
     assert skewed[0][2] > skewed[-1][2]
+    ticks = state["skewed"]["ticks"]
+    step = ticks[1] - ticks[0]
+    assert step in (1000, 2000, 2500, 5000), ticks
+    assert all(t % step == 0 for t in ticks), ticks
     truncated = state["truncated"]
     assert sum(b[2] for b in truncated["bins"]) == 1000
-    assert truncated["scope"].startswith("First 1,000 rows only · 1,000 values")
+    assert truncated["scope"] == "1,000 values"
     assert truncated["note"] == "showing first 1,000 rows (truncated)"
+    assert narrow["texts"], narrow
+    assert all(right <= narrow["width"] - 8 for _, right in narrow["texts"]), narrow

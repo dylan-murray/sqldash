@@ -33,15 +33,37 @@ function niceStep(raw) {
 function decimalsOf(step) {
   const [mantissa, exponent] = String(step).toLowerCase().split("e");
   const frac = (mantissa.split(".")[1] ?? "").length;
-  return Math.min(15, Math.max(0, frac - Number(exponent ?? 0)));
+  return Math.min(20, Math.max(0, frac - Number(exponent ?? 0)));
+}
+
+function clean(value, width) {
+  if (Math.abs(value) < Math.abs(width) * 1e-9) return 0;
+  return Number(value.toPrecision(15));
+}
+
+function spanOver(min, max, n) {
+  const span = max - min;
+  return Number.isFinite(span) ? span / n : max / n - min / n;
 }
 
 function alignedEdges(min, max, width, anchor) {
-  const digits = decimalsOf(width) + 2;
-  const round = (v) => Number(v.toFixed(Math.min(20, digits)));
-  const start = round(anchor + Math.floor((min - anchor) / width) * width);
-  const count = Math.max(1, Math.ceil(round((max - start) / width)));
-  return { start, count, edge: (i) => round(start + i * width) };
+  const at = (k) => clean(anchor + k * width, width);
+  let k0 = Math.floor(min / width - anchor / width);
+  let count = Math.max(1, Math.ceil(max / width - at(k0) / width));
+  if (!Number.isFinite(k0) || !Number.isFinite(count)) return { count: Infinity };
+  if (count > MAX_BINS + 2) return { count };
+  while (at(k0) > min) {
+    k0 -= 1;
+    count += 1;
+  }
+  while (at(k0 + 1) <= min) {
+    k0 += 1;
+    count -= 1;
+  }
+  count = Math.max(1, count);
+  while (count > 1 && at(k0 + count - 1) >= max) count -= 1;
+  while (at(k0 + count) < max) count += 1;
+  return { count, width, edge: (i) => at(k0 + i) };
 }
 
 function autoCount(n) {
@@ -83,29 +105,30 @@ export function binValues(values, { bins, bin_width: binWidth, bin_start: binSta
       summary.tooMany = aligned.count;
     }
   }
-  if (!layout && min === max) {
+  const autoWidth = min === max ? 0 : niceStep(spanOver(min, max, autoCount(included.length)));
+  if (!layout && !(autoWidth > 0 && Number.isFinite(autoWidth))) {
     summary.bins = [{ lo: min, hi: max, count: included.length, last: true }];
     summary.mode = summary.tooMany ? "auto" : bins ? "count" : "auto";
     return summary;
   }
   if (!layout && Number.isInteger(bins) && bins >= 1 && !summary.tooMany) {
     const count = Math.min(bins, MAX_BINS);
-    const width = (max - min) / count;
-    layout = { start: min, count, edge: (i) => (i === count ? max : min + i * width) };
+    const width = spanOver(min, max, count);
+    const edge = (i) => (i === 0 ? min : i === count ? max : clean(min + i * width, width));
+    layout = { count, width, edge };
     summary.mode = "count";
     summary.width = width;
   }
   if (!layout) {
-    const width = niceStep((max - min) / autoCount(included.length));
-    layout = alignedEdges(min, max, width, 0);
-    summary.width = width;
+    layout = alignedEdges(min, max, autoWidth, 0);
+    summary.width = autoWidth;
   }
 
-  const { count, edge } = layout;
-  const span = edge(count) - edge(0);
+  const { count, width, edge } = layout;
+  const first = edge(0);
   const counts = new Array(count).fill(0);
   for (const v of included) {
-    let i = Math.floor(((v - edge(0)) / span) * count);
+    let i = Math.floor(v / width - first / width);
     if (!(i >= 0)) i = 0;
     if (i > count - 1) i = count - 1;
     while (i > 0 && v < edge(i)) i -= 1;
@@ -121,47 +144,65 @@ export function binValues(values, { bins, bin_width: binWidth, bin_start: binSta
   return summary;
 }
 
-export function binLabel(bin, fmt) {
-  if (bin.lo === bin.hi) return formatValue(bin.lo, fmt);
-  return `${formatValue(bin.lo, fmt)} to ${bin.last ? "" : "under "}${formatValue(bin.hi, fmt)}`;
-}
-
 const CURRENCY_CODE = /^[A-Z]{3}$/;
 
-export function edgeLabel(value, fmt) {
+function numberText(value, fmt, digits, compact = false) {
   const { locale, currency } = formatSettings();
-  const big = Math.abs(value) >= 10_000;
+  const notation = compact ? "compact" : "standard";
   if (fmt === "currency" || CURRENCY_CODE.test(fmt)) {
     try {
       return new Intl.NumberFormat(locale, {
         style: "currency",
         currency: CURRENCY_CODE.test(fmt) ? fmt : currency,
-        notation: big ? "compact" : "standard",
+        notation,
         minimumFractionDigits: 0,
-        maximumFractionDigits: big ? 1 : 2,
+        maximumFractionDigits: digits,
       }).format(value);
     } catch {
       return formatValue(value, "compact", true);
     }
   }
-  if (fmt === "percent") return formatValue(value, "percent");
-  return new Intl.NumberFormat(locale, {
-    notation: big ? "compact" : "standard",
-    maximumFractionDigits: big ? 1 : 2,
-  }).format(value);
+  if (fmt === "percent") {
+    return new Intl.NumberFormat(locale, {
+      style: "percent",
+      maximumFractionDigits: Math.max(1, digits - 2),
+    }).format(value);
+  }
+  return new Intl.NumberFormat(locale, { notation, maximumFractionDigits: digits }).format(value);
+}
+
+export function binLabel(bin, fmt) {
+  if (bin.lo === bin.hi) return formatValue(bin.lo, fmt);
+  const step = decimalsOf(niceStep(Math.abs(bin.hi - bin.lo) || Number.MIN_VALUE)) + 2;
+  const text = (v) => {
+    const shown = fmt === "compact" ? formatValue(v, fmt) : null;
+    return shown ?? numberText(v, fmt, Math.min(decimalsOf(v), step));
+  };
+  let lo = text(bin.lo);
+  let hi = text(bin.hi);
+  if (lo === hi) {
+    lo = numberText(bin.lo, "number", Math.min(decimalsOf(bin.lo), step));
+    hi = numberText(bin.hi, "number", Math.min(decimalsOf(bin.hi), step));
+  }
+  return `${lo} to ${bin.last ? "" : "under "}${hi}`;
+}
+
+export function edgeLabel(value, fmt, interval = 0) {
+  const big = Math.abs(value) >= 10_000;
+  const fine = interval > 0 ? decimalsOf(clean(interval, interval)) : 0;
+  if (fmt === "percent") return numberText(value, fmt, fine);
+  return numberText(value, fmt, Math.max(big ? 1 : 2, fine), big);
 }
 
 export function histogramScope(summary, result, { full = false } = {}) {
   const parts = [];
-  if (result.truncated) {
-    parts.push(
-      full
-        ? `first ${result.row_count.toLocaleString()} rows only, not the full distribution`
-        : `first ${result.row_count.toLocaleString()} rows only`
-    );
+  if (result.truncated && full) {
+    parts.push(`first ${result.row_count.toLocaleString()} rows only, not the full distribution`);
   }
-  parts.push(`${summary.included.toLocaleString()} values`);
-  if (summary.nulls) parts.push(`${summary.nulls.toLocaleString()} null excluded`);
+  parts.push(`${summary.included.toLocaleString()} ${summary.included === 1 ? "value" : "values"}`);
+  if (summary.nulls) {
+    parts.push(`${summary.nulls.toLocaleString()} ${summary.nulls === 1 ? "null" : "nulls"} excluded`);
+  }
   if (summary.nonNumeric) {
     parts.push(`${summary.nonNumeric.toLocaleString()} non-numeric excluded`);
   }
@@ -182,12 +223,19 @@ function axisExtent(summary) {
     const half = Math.abs(first.lo) >= 100 ? niceStep(Math.abs(first.lo) * 0.01) : 0.5;
     return { min: first.lo - half, max: first.hi + half, interval: half, only: first.lo };
   }
-  const width = first.hi - first.lo;
-  return {
-    min: first.lo,
-    max: bins[bins.length - 1].hi,
-    interval: width * Math.ceil(bins.length / TICK_TARGET),
-  };
+  const max = bins[bins.length - 1].hi;
+  const interval =
+    summary.mode === "count"
+      ? niceStep(spanOver(first.lo, max, TICK_TARGET))
+      : (first.hi - first.lo) * Math.ceil(bins.length / TICK_TARGET);
+  const base = summary.mode === "count" ? Math.ceil(first.lo / interval - 1e-9) * interval : first.lo;
+  const ticks = [];
+  for (let k = 0; ticks.length <= TICK_TARGET * 2; k += 1) {
+    const tick = clean(base + k * interval, interval);
+    if (!(tick <= max + interval * 1e-9)) break;
+    ticks.push(tick);
+  }
+  return { min: first.lo, max, interval, ticks };
 }
 
 export function histogramOption(spec, result, forcedColor, height = 0) {
@@ -216,15 +264,15 @@ export function histogramOption(spec, result, forcedColor, height = 0) {
       ...option.xAxis.axisLabel,
       formatter: (v) => {
         if (extent?.only !== undefined && Math.abs(v - extent.only) > 1e-9) return "";
-        return edgeLabel(v, xFormat);
+        return edgeLabel(v, xFormat, extent?.interval);
       },
     },
     ...(extent ?? {}),
   };
   delete option.xAxis.only;
+  delete option.xAxis.ticks;
   if (extent && extent.only === undefined) {
-    const steps = (extent.max - extent.min) / extent.interval;
-    option.xAxis.axisLabel.showMaxLabel = Math.abs(steps - Math.round(steps)) < 1e-9;
+    option.xAxis.axisLabel.customValues = extent.ticks;
   }
   option.yAxis.axisTick = { show: false };
   option.yAxis.minInterval = percent ? 0 : 1;
@@ -280,19 +328,30 @@ export function histogramOption(spec, result, forcedColor, height = 0) {
       ]),
     },
   ];
-  option.graphic = [
-    {
+  const scope = histogramScope(summary, result);
+  option.series.push({
+    type: "custom",
+    name: "scope",
+    silent: true,
+    clip: false,
+    tooltip: { show: false },
+    encode: { x: [], y: [] },
+    data: [[scope]],
+    renderItem: (params, api) => ({
       type: "text",
-      left: 8,
-      top: compact ? 2 : 8,
+      x: 8,
+      y: compact ? 2 : 8,
       silent: true,
       style: {
-        text: histogramScope(summary, result),
+        text: scope,
+        width: Math.max(0, api.getWidth() - 16),
+        overflow: "truncate",
+        ellipsis: "…",
         fill: cssVar("--ink-muted"),
         fontSize: 11,
         fontFamily: cssVar("--font") || "system-ui, sans-serif",
       },
-    },
-  ];
+    }),
+  });
   return option;
 }
