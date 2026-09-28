@@ -175,6 +175,7 @@ export class ChartBuilder {
     const references = this._spec.references;
     this._spec = { ...inferSpec(this.spec, result) };
     if (references) this._spec.references = references;
+    this.promoteAxes();
   }
 
   renderAll() {

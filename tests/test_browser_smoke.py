@@ -7640,3 +7640,50 @@ def test_after_promotion_the_builder_edits_the_promoted_axis(page, tmp_path_fact
         assert "right" not in chart.axes, text
     finally:
         _stop_server(server, thread, page)
+
+
+def test_a_query_that_drops_the_left_column_promotes_the_builder_state(page, tmp_path_factory):
+    root = tmp_path_factory.mktemp("combodrop")
+    (root / "d.yaml").write_text(
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        "tiles:\n"
+        "  - title: T\n"
+        "    chart:\n"
+        "      type: bar\n"
+        "      x: w\n"
+        "      y: [revenue, rate, margin]\n"
+        "      series: {rate: {type: line, axis: right}, margin: {type: line, axis: right}}\n"
+        "      axes:\n"
+        "        left: {title: Revenue, min: 10000, max: 100000}\n"
+        "        right: {title: Rate, min: 0, max: 1}\n"
+        "    sql: \"SELECT w, revenue, rate, margin FROM (VALUES ('a', 50000, 0.25, 0.4),"
+        " ('b', 60000, 0.5, 0.3)) t(w, revenue, rate, margin)\"\n"
+    )
+    app = create_app(root, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    try:
+        page.goto(f"http://127.0.0.1:{port}/d/d/query?tile=t", wait_until="load")
+        page.click("#run-btn")
+        page.wait_for_selector("#qb-preview canvas")
+        page.evaluate(
+            "(sql) => ace.edit('sql-editor').setValue(sql, -1)",
+            "SELECT w, rate, margin FROM (VALUES ('a', 0.25, 0.4), ('b', 0.5, 0.3))"
+            " t(w, rate, margin)",
+        )
+        page.click("#run-btn")
+        page.wait_for_function(
+            """() => !document.querySelector('[data-spec-y][value="revenue"]')"""
+        )
+        assert page.locator('select[aria-label="Axis for rate"]').input_value() == "left"
+        assert page.locator('input[aria-label="Left axis title"]').input_value() == "Rate"
+        _pick(page, "Axis for rate", "left")
+        extent = page.evaluate(
+            """() => {
+              const mount = document.querySelector('#qb-preview .chart-mount');
+              return echarts.getInstanceByDom(mount).getModel().getComponent('yAxis')
+                .axis.scale.getExtent();
+            }"""
+        )
+        assert extent == [0, 1], extent
+    finally:
+        _stop_server(server, thread, page)
