@@ -25,11 +25,14 @@ function numericValue(value) {
   return undefined;
 }
 
+const NICE_FACTORS = [1, 2, 2.5, 5, 10];
+
 function niceStep(raw) {
-  const magnitude = 10 ** Math.floor(Math.log10(raw));
-  const norm = raw / magnitude;
-  const factor = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10;
-  return factor * magnitude;
+  let exponent = Math.floor(Math.log10(raw));
+  if (raw < Number(`1e${exponent}`)) exponent -= 1;
+  if (raw >= Number(`1e${exponent + 1}`)) exponent += 1;
+  const factor = NICE_FACTORS.find((f) => raw <= Number(`${f}e${exponent}`));
+  return Number(`${factor}e${exponent}`);
 }
 
 function decimalsOf(step) {
@@ -277,9 +280,11 @@ function scientificDigits(value) {
 function numberText(value, fmt, digits, compact = false) {
   const { locale, currency } = formatSettings();
   if (digits > MAX_FRACTION_DIGITS) {
+    const fraction = scientificDigits(value);
     return new Intl.NumberFormat(locale, {
       notation: "scientific",
-      maximumFractionDigits: scientificDigits(value),
+      minimumFractionDigits: 0,
+      maximumFractionDigits: fraction,
     }).format(value);
   }
   const notation = compact ? "compact" : "standard";
@@ -299,10 +304,15 @@ function numberText(value, fmt, digits, compact = false) {
   if (fmt === "percent") {
     return new Intl.NumberFormat(locale, {
       style: "percent",
+      minimumFractionDigits: 0,
       maximumFractionDigits: Math.max(0, digits - 2),
     }).format(value);
   }
-  return new Intl.NumberFormat(locale, { notation, maximumFractionDigits: digits }).format(value);
+  return new Intl.NumberFormat(locale, {
+    notation,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: digits,
+  }).format(value);
 }
 
 export function exactText(value, fmt) {
