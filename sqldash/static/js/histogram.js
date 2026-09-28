@@ -52,6 +52,23 @@ function sum(a, b) {
   return clean(a + b, Math.abs(a) + Math.abs(b));
 }
 
+const SHORT_DECIMALS = 6;
+
+function isShort(value) {
+  return decimalsOf(value) <= SHORT_DECIMALS;
+}
+
+function displayDigits(edges, width) {
+  const tolerance = Math.abs(width) / 1000;
+  for (let d = 0; d <= MAX_FRACTION_DIGITS; d += 1) {
+    const shown = edges.map((e) => (isShort(e) ? e : Number(e.toFixed(d))));
+    const close = shown.every((v, i) => Math.abs(v - edges[i]) <= tolerance);
+    const distinct = shown.every((v, i) => i === 0 || v > shown[i - 1]);
+    if (close && distinct) return d;
+  }
+  return undefined;
+}
+
 function firstAbove(sorted, value) {
   let lo = 0;
   let hi = sorted.length;
@@ -206,6 +223,8 @@ export function binValues(values, { bins, bin_width: binWidth, bin_start: binSta
   const edge = (i) => edges[i];
   if (!soundLayout({ count: layout.count, edge }, min, max)) return unbinnable();
 
+  summary.digits = displayDigits(edges, layout.width);
+
   const { count, width } = layout;
   const first = edge(0);
   const counts = new Array(count).fill(0);
@@ -269,9 +288,13 @@ export function exactText(value, fmt) {
   return numberText(value, fmt === "compact" ? "number" : fmt, decimalsOf(value));
 }
 
-export function binLabel(bin, fmt) {
+export function binLabel(bin, fmt, digits) {
   if (bin.lo === bin.hi) return formatValue(bin.lo, fmt);
-  return `${exactText(bin.lo, fmt)} to ${bin.last ? "" : "under "}${exactText(bin.hi, fmt)}`;
+  const text = (v) =>
+    digits === undefined || isShort(v)
+      ? exactText(v, fmt)
+      : numberText(v, fmt === "compact" ? "number" : fmt, digits);
+  return `${text(bin.lo)} to ${bin.last ? "" : "under "}${text(bin.hi)}`;
 }
 
 export function tickLabels(ticks, fmt) {
@@ -388,7 +411,7 @@ export function histogramOption(spec, result, forcedColor, height = 0) {
     const share = total ? bin.count / total : 0;
     return (
       `<div style="font-weight:600;margin-bottom:4px">${escapeHtml(humanize(spec.x))} ` +
-      `${escapeHtml(binLabel(bin, xFormat))}</div>` +
+      `${escapeHtml(binLabel(bin, xFormat, summary.digits))}</div>` +
       `${p.marker} ${escapeHtml(countText(bin.count))} ` +
       `${bin.count === 1 ? "row" : "rows"}` +
       `&nbsp;<span style="opacity:.6">${escapeHtml(formatValue(share, "percent"))}</span>` +

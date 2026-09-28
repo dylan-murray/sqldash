@@ -241,18 +241,42 @@ test("a derived edge is never moved across a data value", () => {
   assert.equal(summary.bins[1].lo, d);
 });
 
-test("every tooltip edge is the exact edge rows were counted against", () => {
+function shownEdges(summary) {
+  const shown = [];
+  for (const bin of summary.bins) {
+    const [lo, hi] = binLabel(bin, "number", summary.digits).replace("under ", "").split(" to ");
+    if (!shown.length) shown.push(Number(lo.replaceAll(",", "")));
+    shown.push(Number(hi.replaceAll(",", "")));
+  }
+  return shown;
+}
+
+test("tooltip edges round only as far as they stay distinct, close and exact when short", () => {
+  const cases = [
+    [[22.5, 81.08, 100, 374, 200, 300], { bins: 12 }],
+    [[0.1234567, 1.1234567, 2.1234567], { bins: 2 }],
+    [[0.001, 1.001, 2.001], { bins: 2 }],
+    [[0.001, 1.001, 2.001], { bin_width: 1, bin_start: 0.001 }],
+    [[0, 0.3, 1], { bins: 10 }],
+  ];
+  for (const [values, options] of cases) {
+    const summary = binValues(values, options);
+    const edges = [summary.bins[0].lo, ...summary.bins.map((b) => b.hi)];
+    const shown = shownEdges(summary);
+    const label = JSON.stringify([options, shown]);
+    shown.forEach((v, i) => {
+      if (i) assert.ok(v > shown[i - 1], `distinct ${label}`);
+      assert.ok(Math.abs(v - edges[i]) <= summary.width / 1000, `close ${label}`);
+      if (String(edges[i]).split(".")[1]?.length <= 6) assert.equal(v, edges[i], `short ${label}`);
+    });
+  }
+  const uneven = binValues([22.5, 81.08, 100, 374, 200, 300], { bins: 12 });
+  assert.equal(binLabel(uneven.bins[1], "number", uneven.digits), "51.79 to under 81.08");
   const counted = binValues([0.1234567, 1.1234567, 2.1234567], { bins: 2 });
   assert.deepEqual(
-    counted.bins.map((b) => binLabel(b, "number")),
-    ["0.1234567 to under 1.1234567", "1.1234567 to 2.1234567"]
+    counted.bins.map((b) => binLabel(b, "number", counted.digits)),
+    ["0.123 to under 1.123", "1.123 to 2.123"]
   );
-  const uneven = binValues([22.5, 81.08, 100, 374, 200, 300], { bins: 12 });
-  for (const bin of uneven.bins) {
-    const [lo, hi] = binLabel(bin, "number").replace("under ", "").split(" to ");
-    assert.equal(Number(lo.replaceAll(",", "")), bin.lo);
-    assert.equal(Number(hi.replaceAll(",", "")), bin.hi);
-  }
 });
 
 test("compact axis ticks that would read the same fall back to full numbers", () => {
