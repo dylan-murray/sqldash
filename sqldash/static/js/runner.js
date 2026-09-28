@@ -41,6 +41,7 @@ export const tileResults = new Map();
 export const tilePrevResults = new Map();
 export const tileExecutions = new Map();
 export const tileReferenceValues = new Map();
+const drillPlans = new Map(Object.entries(data.drills ?? {}));
 
 let etag = data.etag;
 export const getEtag = () => etag;
@@ -335,13 +336,17 @@ function mergeCompareResult(spec, current, previous, mode) {
   const merged = {
     columns: [...current.columns, { name: "__period", type: "string" }],
     rows: [],
+    unshifted: [],
     row_count: 0,
     truncated: current.truncated || previous.truncated,
   };
   const timeIdx = current.columns.findIndex(
     (c) => c.type === "timestamp" || c.type === "date"
   );
-  for (const row of current.rows) merged.rows.push([...row, "current"]);
+  for (const row of current.rows) {
+    merged.rows.push([...row, "current"]);
+    merged.unshifted.push(merged.rows.at(-1));
+  }
   for (const row of previous.rows) {
     const shifted = [...row];
     if (timeIdx >= 0 && shifted[timeIdx] != null) {
@@ -359,6 +364,7 @@ function mergeCompareResult(spec, current, previous, mode) {
       shifted[timeIdx] = cur.toISOString().slice(0, 10);
     }
     merged.rows.push([...shifted, "previous"]);
+    merged.unshifted.push([...row, "previous"]);
   }
   merged.row_count = merged.rows.length;
   return merged;
@@ -393,7 +399,7 @@ function renderDelta(body, spec, current, previous, label) {
 }
 
 export function drillPlan(tileId) {
-  return data.drills?.[tileId] ?? null;
+  return drillPlans.get(tileId) ?? null;
 }
 
 function drillContext() {
@@ -405,7 +411,8 @@ function drillFromPoint(plan, spec, result, point, event) {
     toast(plan.errors[0], "error");
     return;
   }
-  const row = rowForPoint(spec, result, point);
+  const drawn = rowForPoint(spec, result, point);
+  const row = result.unshifted?.[result.rows.indexOf(drawn)] ?? drawn;
   const { href, error } = drillUrl(plan, row, result.columns, drillContext());
   if (!href) {
     toast(error, "error");
@@ -930,7 +937,8 @@ export function replaceDashboard(next) {
   // nosemgrep: insecure-object-assign
   Object.assign(dashboard, next.dashboard);
   setEtag(next.etag);
-  data.drills = next.drills ?? {};
+  drillPlans.clear();
+  for (const [id, plan] of Object.entries(next.drills ?? {})) drillPlans.set(id, plan);
   if (next.today) serverToday = next.today;
   setFormatConfig({ locale: dashboard.locale, currency: dashboard.currency });
   configureRefresh();

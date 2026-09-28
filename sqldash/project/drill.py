@@ -10,6 +10,7 @@ from urllib.parse import quote
 
 from sqldash.models.dashboard import Dashboard, FilterDef, Tile
 from sqldash.models.drill import CurrentFilter, DrillSpec
+from sqldash.params import select_choices
 from sqldash.project.store import InvalidDashboardError, NotFoundError, Store
 
 SCALAR_ACCEPTS = {
@@ -73,6 +74,13 @@ def _load_target(
     return target, dashboard, None
 
 
+def _options(target_filter: FilterDef) -> dict[str, list[str]]:
+    """The choices a destination select offers, when they are known before it runs."""
+    if target_filter.type != "select" or target_filter.options is None:
+        return {}
+    return {"options": [str(o) for o in select_choices(target_filter)]}
+
+
 def _map_current(
     target_filter: FilterDef, value: CurrentFilter, source: Dashboard
 ) -> tuple[list[dict[str, Any]], str | None]:
@@ -98,7 +106,8 @@ def _map_current(
             f"drill filter {_filter_label(target_filter)} cannot take this dashboard's "
             f"filter {_filter_label(own)}; the value would not fit the destination"
         )
-    return [{"param": target_filter.name, "type": target_filter.type, "current": own.name}], None
+    entry = {"param": target_filter.name, "type": target_filter.type, "current": own.name}
+    return [entry | _options(target_filter)], None
 
 
 def plan_drill(
@@ -136,14 +145,10 @@ def plan_drill(
                     "with {filter: <this dashboard's daterange>} instead of a column"
                 )
                 continue
-            entry: dict[str, Any] = {
-                "param": name,
-                "type": target_filter.type,
-                "column": value,
-            }
-            if target_filter.type == "select" and target_filter.options is not None:
-                entry["options"] = [str(o) for o in target_filter.options]
-            params.append(entry)
+            params.append(
+                {"param": name, "type": target_filter.type, "column": value}
+                | _options(target_filter)
+            )
         if not spec.filters:
             warnings.append(
                 f"drill to '{spec.dashboard or 'this dashboard'}' maps no filters, so every "

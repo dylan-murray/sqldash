@@ -50,15 +50,17 @@ export function drillUrl(plan, row, columns, context) {
     }
   }
   for (const param of plan.params) {
+    let text;
     if (param.current !== undefined) {
-      const value = context.filters[param.current];
-      if (value !== undefined && value !== "") url.searchParams.set(`f_${param.param}`, value);
-      continue;
+      text = context.filters[param.current];
+      if (text === undefined || text === "") continue;
+    } else {
+      const at = columns.findIndex((c) => c.name === param.column);
+      if (at < 0) return { error: `column '${param.column}' is not in this tile's result` };
+      const value = valueText(row?.[at], param.type, param.column);
+      if (value.error) return { error: value.error };
+      text = value.text;
     }
-    const at = columns.findIndex((c) => c.name === param.column);
-    if (at < 0) return { error: `column '${param.column}' is not in this tile's result` };
-    const { text, error } = valueText(row?.[at], param.type, param.column);
-    if (error) return { error };
     if (param.options && !param.options.includes(text)) {
       return { error: `'${text}' is not one of the options of ${plan.title}'s ${param.param} filter` };
     }

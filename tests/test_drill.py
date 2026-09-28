@@ -274,3 +274,60 @@ def test_editing_a_drill_tile_in_place_keeps_its_drill_block(tmp_path):
     assert "20 AS revenue" in text
     assert "    drill:\n      dashboard: detail\n" in text
     assert store.load("overview")[0].tiles[0].drill.filters["customer"] == "customer"
+
+
+def test_a_select_without_a_default_offers_all_to_the_link_as_its_filter_bar_does(tmp_path):
+    detail = DETAIL.replace("options: [all, gold, silver]", "options: [gold, silver]")
+    store = _project(
+        tmp_path,
+        overview=_with_drill("{dashboard: detail, filters: {tier: customer}}"),
+        detail=detail,
+    )
+    dashboard, _, _ = store.load("overview")
+    plan = plan_drill(store, "overview", dashboard, dashboard.tiles[0])
+    assert plan["params"][0]["options"] == ["all", "gold", "silver"]
+
+
+def test_a_carried_filter_value_is_checked_against_the_destination_options(tmp_path):
+    detail = DETAIL.replace("options: [all, gold, silver]", "options: [all, eu, apac]")
+    drill = "{dashboard: detail, filters: {tier: {filter: region}}}"
+    store = _project(tmp_path, overview=_with_drill(drill), detail=detail)
+    dashboard, _, _ = store.load("overview")
+    plan = plan_drill(store, "overview", dashboard, dashboard.tiles[0])
+    assert plan["params"] == [
+        {"param": "tier", "type": "select", "current": "region", "options": ["all", "eu", "apac"]}
+    ]
+
+
+def test_validate_dashboard_reports_a_drill_column_a_metric_tile_does_not_return(tmp_path):
+    (tmp_path / "metrics.yaml").write_text(
+        "source: {type: duckdb, database: ':memory:'}\n"
+        "relations:\n"
+        "  orders: {sql: \"SELECT 1 AS amount, 'us' AS region\"}\n"
+        "metrics:\n"
+        "  revenue: {relation: orders, expr: SUM(amount), dimensions: [{name: region}]}\n"
+    )
+    store = _project(tmp_path, detail=DETAIL)
+    text = (
+        "title: Overview\n" + SOURCE + "tiles:\n"
+        "  - title: By region\n"
+        "    chart: bar\n"
+        "    metric: {name: revenue, dimensions: [region]}\n"
+        "    drill: {dashboard: detail, filters: {customer: nonexistent}}\n"
+        "  - title: By region again\n"
+        "    chart: bar\n"
+        "    metric: {name: revenue, dimensions: [region]}\n"
+        "    drill: {dashboard: detail, filters: {customer: region}}\n"
+    )
+    registry = ExecutionRegistry(max_workers=1)
+    try:
+        payload = validate_dashboard(
+            text, store=store, layer=SemanticLayer(store), registry=registry, name="overview"
+        )
+    finally:
+        registry.shutdown()
+    missing = [e for e in payload["errors"] if "drill reads column" in e]
+    assert len(missing) == 1, payload["errors"]
+    assert "tile 'by_region'" in missing[0]
+    assert "'nonexistent'" in missing[0]
+    assert "region, revenue" in missing[0]

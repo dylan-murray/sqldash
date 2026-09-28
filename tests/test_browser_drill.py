@@ -203,3 +203,117 @@ def test_a_value_the_destination_cannot_show_is_named(page, served):
     assert "has no '<b>nope</b>' to filter to" in page.locator(".toast-error").text_content()
     assert page.locator(".toast-error b").count() == 0
     assert page.eval_on_selector('select[data-filter="category"]', "e => e.value") == "all"
+
+
+EDGES = {
+    "ctor": """title: Ctor
+source: {type: duckdb, attach_files: true}
+tiles:
+  - {title: Constructor, chart: table, sql: "SELECT 1 AS n"}
+""",
+    "daily": """title: Daily
+source: {type: duckdb, attach_files: true}
+filters:
+  - {name: dates, type: daterange, default: last_30_days}
+tiles:
+  - title: Daily revenue
+    chart: line
+    metric: {name: revenue, grain: day, compare: previous_period}
+    drill: {dashboard: day_detail, filters: {day: order_date}}
+""",
+    "day_detail": """title: Day detail
+source: {type: duckdb, attach_files: true}
+filters:
+  - {name: day, type: date}
+tiles:
+  - {title: Rows, sql: "SELECT 1 AS n"}
+""",
+    "dup": """title: Dup
+source: {type: duckdb, attach_files: true}
+filters:
+  - {name: n, type: number, default: 1}
+tiles:
+  - title: q
+    chart: table
+    sql: "SELECT 'x' AS k, {{ n }} AS n"
+    drill: {dashboard: dest_a, filters: {k: k}}
+  - title: q
+    chart: table
+    sql: "SELECT 'y' AS k, {{ n }} AS n"
+    drill: {dashboard: dest_b, filters: {k: k}}
+""",
+    "dest_a": "title: Dest A\nsource: {type: duckdb, attach_files: true}\n"
+    "filters:\n  - {name: k, type: text}\ntiles:\n  - {title: A, sql: 'SELECT 1 AS n'}\n",
+    "dest_b": "title: Dest B\nsource: {type: duckdb, attach_files: true}\n"
+    "filters:\n  - {name: k, type: text}\ntiles:\n  - {title: B, sql: 'SELECT 1 AS n'}\n",
+}
+
+
+@pytest.fixture(scope="module")
+def edges(tmp_path_factory):
+    root = tmp_path_factory.mktemp("drill-edges")
+    create_demo(root)
+    for name, text in EDGES.items():
+        (root / ".sqldash" / f"{name}.yaml").write_text(text)
+    app = create_app(root, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    yield f"http://127.0.0.1:{port}"
+    _stop_server(server, thread)
+
+
+def test_a_tile_named_like_an_object_property_is_not_a_drill(page, edges):
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{edges}/d/ctor")
+    _wait_tiles(page)
+    tile = page.locator('.tile[data-tile-id="constructor"]')
+    assert tile.locator("td").first.text_content() == "1"
+    assert tile.locator(".tile-drill").count() == 0
+    assert errors == []
+
+
+def test_a_previous_period_point_drills_into_the_day_it_came_from(page, edges):
+    page.goto(f"{edges}/d/daily")
+    _wait_tiles(page)
+    mount = '.tile[data-tile-id="daily_revenue"] .chart-mount'
+    page.wait_for_function(
+        f"() => {{ const m = document.querySelector('{mount}'); "
+        "return Boolean(m && echarts.getInstanceByDom(m)); }"
+    )
+    start = page.eval_on_selector_all(".dr-date", "els => els.map(e => e.value)")[0]
+    point = page.evaluate(
+        """(mount) => {
+          const el = document.querySelector(mount);
+          const chart = echarts.getInstanceByDom(el);
+          const series = chart.getOption().series;
+          const at = series.findIndex((s) => s.name === "previous");
+          const datum = series[at].data[0];
+          const [x, y] = chart.convertToPixel({seriesIndex: at}, datum);
+          const r = el.getBoundingClientRect();
+          return {x: r.x + x, y: r.y + y, plotted: String(datum[0]).slice(0, 10)};
+        }""",
+        mount,
+    )
+    assert point["plotted"] >= start
+    page.mouse.click(point["x"], point["y"])
+    page.wait_for_url("**/d/day_detail?**")
+    assert _query(page)["f_day"] < start
+
+
+def test_deleting_a_tile_leaves_the_survivor_its_own_id_and_drill(page, edges):
+    page.on("dialog", lambda d: d.accept())
+    page.goto(f"{edges}/d/dup?edit=1")
+    _wait_tiles(page)
+    first = page.locator('.tile[data-tile-id="q"]')
+    first.hover()
+    first.locator('.wa-btn[data-action="delete"]').click()
+    page.wait_for_function("() => document.querySelectorAll('.tile').length === 1")
+    assert page.eval_on_selector(".tile", "e => e.dataset.tileId") == "q_2"
+    page.fill('[data-filter="n"]', "2")
+    page.keyboard.press("Enter")
+    page.wait_for_function(
+        "() => [...document.querySelectorAll('.tile td')].some(td => td.textContent === '2')"
+    )
+    link = page.locator(".tile a.cell-link").first
+    assert link.text_content() == "y"
+    assert urlparse(link.get_attribute("href")).path == "/d/dest_b"

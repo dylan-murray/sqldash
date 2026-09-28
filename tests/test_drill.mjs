@@ -122,3 +122,11 @@ test("the link is always a same-origin dashboard path", () => {
   assert.ok(href.startsWith("/d/customer_detail?"), href);
   assert.equal(new URL(href, "http://x").searchParams.get("f_c"), "javascript:alert(1)//");
 });
+
+test("a carried filter value outside the destination's options is refused, not sent", () => {
+  const carried = plan([{ param: "region", type: "select", current: "region", options: ["all", "eu"] }]);
+  const at = (region) => drillUrl(carried, result.rows[0], result.columns, { ...context, filters: { region } });
+  assert.match(at("us").error, /'us' is not one of the options of Customer detail's region filter/);
+  assert.equal(new URL(at("eu").href, "http://x").searchParams.get("f_region"), "eu");
+  assert.equal(new URL(at("").href, "http://x").searchParams.has("f_region"), false);
+});

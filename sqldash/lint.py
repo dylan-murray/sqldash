@@ -1785,10 +1785,13 @@ def _metric_tile_query_already_linted(tile, definition) -> bool:
 
 def _dry_run_metric_tiles(
     registry, layer, dashboard, base_dir, repo: str | None = None
-) -> list[str]:
+) -> tuple[list[str], dict[str, set[str]]]:
+    """Compile and probe every project-metric tile. Returns the errors and the
+    column names each probe came back with, keyed by tile id."""
     available, ambiguous = _metric_catalog(layer, repo)
     errors: list[str] = []
-    probed: set[tuple] = set()
+    columns: dict[str, set[str]] = {}
+    probed: dict[tuple, set[str] | None] = {}
     shapes: set[tuple] = set()
     for tile in dashboard.tiles:
         if not tile.metric or tile.metric.name in dashboard.metrics:
@@ -1800,8 +1803,10 @@ def _dry_run_metric_tiles(
             continue
         key = (tile.metric.name, tuple(tile.metric.dimensions), tile.metric.grain)
         if key in probed:
+            if probed[key] is not None:
+                columns[tile.id] = probed[key]
             continue
-        probed.add(key)
+        probed[key] = None
         try:
             bound = bind_resolved(
                 resolved,
@@ -1814,16 +1819,30 @@ def _dry_run_metric_tiles(
                 errors.append(f"tile '{tile.id}': metric does not compile — {exc}")
             continue
         shapes.add((tile.metric.name, bound.sql, repr([])))
-        errors.extend(
-            f"tile '{tile.id}': SQL fails against the source — {msg.split(' — ', 1)[-1]}"
-            for msg in _probe_compiled(
-                registry, resolved.source, resolved.base_dir, {tile.id: bound.sql}
-            )
-        )
+        try:
+            with registry.connection(resolved.source, resolved.base_dir) as connector:
+                try:
+                    # semgrep: probing the author's own SQL is what lint does; values stay bound
+                    # nosemgrep: sqlalchemy-execute-raw-query
+                    probe = connector.execute(
+                        f"SELECT * FROM ({bound.sql}) sqldash_probe WHERE 1 = 0",
+                        [],
+                        1,
+                        CancelToken(),
+                    )
+                except Exception as exc:
+                    errors.append(
+                        f"tile '{tile.id}': SQL fails against the source — "
+                        f"{str(exc).splitlines()[0]}"
+                    )
+                    continue
+        except Exception:
+            continue
+        columns[tile.id] = probed[key] = {c.name for c in probe.columns}
     errors.extend(
         _dry_run_reference_metrics(registry, dashboard, base_dir, available, ambiguous, shapes)
     )
-    return errors
+    return errors, columns
 
 
 def _dry_run_reference_metrics(
@@ -2108,9 +2127,12 @@ def validate_dashboard(
             if e not in errors and not _sql_error_already_linted(e, errors, dashboard)
         )
         lint_findings.extend(f"warning: {w}" for w in _chart_column_warnings(dashboard, columns))
-        errors.extend(_drill_column_errors(dashboard, columns))
+        tile_errors, metric_columns = _dry_run_metric_tiles(
+            registry, layer, dashboard, base_dir, repo
+        )
+        errors.extend(_drill_column_errors(dashboard, columns | metric_columns))
         errors.extend(_probe_compiled(registry, dashboard.source, base_dir, compiled))
-        errors.extend(_dry_run_metric_tiles(registry, layer, dashboard, base_dir, repo))
+        errors.extend(tile_errors)
     return {
         "valid": not errors,
         "errors": errors,
