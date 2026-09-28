@@ -7390,3 +7390,38 @@ def test_a_reference_the_warehouse_refuses_is_named_on_the_tile(page, tmp_path_f
         assert lines == ["Five  5"], lines
     finally:
         _stop_server(server, thread, page)
+
+
+def test_a_reference_to_a_metric_named_proto_uses_the_chart_format(page, tmp_path_factory):
+    root = tmp_path_factory.mktemp("protoref")
+    create_demo(root)
+    metrics = root / ".sqldash" / "metrics.yaml"
+    metrics.write_text(
+        metrics.read_text() + "\n  __proto__:\n    relation: orders\n    expr: SUM(amount)\n"
+    )
+    (root / ".sqldash" / "r.yaml").write_text(
+        "title: R\n"
+        "source: {type: duckdb, attach_files: true}\n"
+        "tiles:\n"
+        "  - title: Bars\n"
+        "    chart:\n"
+        "      type: bar\n"
+        "      format: currency\n"
+        "      references: [{metric: __proto__, label: All}]\n"
+        "    sql: SELECT category, SUM(amount) AS revenue FROM orders GROUP BY 1\n"
+    )
+    app = create_app(root, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    try:
+        page.goto(f"http://127.0.0.1:{port}/d/r", wait_until="load")
+        _wait_tiles(page)
+        read = """() => {
+          const m = document.querySelector('.tile[data-tile-id="bars"] .chart-mount');
+          const chart = m && echarts.getInstanceByDom(m);
+          const refs = chart?.getOption().series.find((s) => s.name === '__reference_lines');
+          return refs ? refs.markLine.data[0].label.formatter : null;
+        }"""
+        page.wait_for_function(read)
+        assert page.evaluate(read).startswith("All  $"), page.evaluate(read)
+    finally:
+        _stop_server(server, thread, page)

@@ -2107,3 +2107,48 @@ def test_a_trailing_window_reference_is_rejected_under_a_date_range(tmp_path, da
     errors = [f.message for f in lint(tmp_path) if f.level == "error"]
     rejected = [m for m in errors if "a trailing 28 days window" in m]
     assert bool(rejected) is dated, errors
+
+
+_BROKEN_TARGET = (
+    "source: {type: duckdb, database: ':memory:'}\n"
+    'relations:\n  orders: {sql: "SELECT 1 AS amount"}\n'
+    "metrics:\n"
+    "  target: {relation: orders, expr: SUM(missing_column)}\n"
+    "  revenue: {relation: orders, expr: SUM(amount)}\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("tiles", "failing"),
+    [
+        (
+            [
+                "{title: T, sql: 'SELECT 1 AS a, 2 AS b', chart: {type: bar, references: "
+                "[{metric: target}]}}"
+            ],
+            1,
+        ),
+        (
+            [
+                "{title: T, sql: 'SELECT 1 AS a, 2 AS b', chart: {type: bar, references: "
+                "[{metric: revenue}]}}"
+            ],
+            0,
+        ),
+        (
+            [
+                "{title: N, metric: target}",
+                "{title: T, sql: 'SELECT 1 AS a, 2 AS b', chart: {type: bar, references: "
+                "[{metric: target}]}}",
+            ],
+            1,
+        ),
+    ],
+    ids=["reference-only", "valid", "shared-with-a-tile"],
+)
+def test_validate_dashboard_probes_metrics_used_as_references(tmp_path, tiles, failing):
+    payload = _validate_metric_tile(tmp_path, _BROKEN_TARGET, "\n  - ".join(tiles))
+    assert payload["sql_checked"], payload
+    missing = [e for e in payload["errors"] if "missing_column" in e]
+    assert len(missing) == failing, payload["errors"]
+    assert payload["valid"] is (failing == 0), payload

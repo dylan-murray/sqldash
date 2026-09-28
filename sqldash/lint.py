@@ -1717,6 +1717,39 @@ def _dry_run_metric_tiles(
                 registry, resolved.source, resolved.base_dir, {tile.id: bound.sql}
             )
         )
+    errors.extend(_dry_run_reference_metrics(registry, dashboard, available, ambiguous, probed))
+    return errors
+
+
+def _dry_run_reference_metrics(registry, dashboard, available, ambiguous, probed) -> list[str]:
+    """A metric reference runs as the metric with no dimensions and no grain,
+    so it is probed as that query, once per metric and not again when a
+    metric tile already ran the same one. Inline metrics are probed with the
+    dashboard's own `metrics:`."""
+    errors: list[str] = []
+    for tile in dashboard.tiles:
+        references = tile.chart.references if tile.chart else []
+        for n, ref in enumerate(references, start=1):
+            name = ref.metric
+            if name is None or name in dashboard.metrics or name in ambiguous:
+                continue
+            resolved = available.get(name)
+            key = (name, (), None)
+            if resolved is None or key in probed:
+                continue
+            probed.add(key)
+            label = f"tile '{tile.id}': reference {n} metric '{name}'"
+            try:
+                bound = bind_resolved(resolved, dimensions=(), grain=None, limit=1)
+            except (SemanticError, ValueError) as exc:
+                errors.append(f"{label} does not compile: {exc}")
+                continue
+            errors.extend(
+                f"{label} fails against the source: {msg.split(' — ', 1)[-1]}"
+                for msg in _probe_compiled(
+                    registry, resolved.source, resolved.base_dir, {tile.id: bound.sql}
+                )
+            )
     return errors
 
 

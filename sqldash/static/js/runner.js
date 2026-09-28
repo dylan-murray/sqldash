@@ -248,14 +248,17 @@ function noteReferenceErrors(body, errors) {
 }
 
 
+/* Keyed by metric name, and `__proto__` is a valid one: read own entries only. */
+const ownEntry = (map, key) => (map != null && Object.hasOwn(map, key) ? map[key] : undefined);
+
 function withReferenceValues(spec, values) {
   if (!spec.references?.some((ref) => ref?.metric)) return spec;
   const references = spec.references.map((ref) =>
     ref?.metric
       ? {
           ...ref,
-          y: values?.[ref.metric] ?? null,
-          format: ref.format || dashboard.metric_formats?.[ref.metric] || null,
+          y: ownEntry(values, ref.metric) ?? null,
+          format: ref.format || ownEntry(dashboard.metric_formats, ref.metric) || null,
         }
       : ref
   );
