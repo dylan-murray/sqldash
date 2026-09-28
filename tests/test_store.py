@@ -497,3 +497,36 @@ def test_a_syntax_error_keeps_ruamels_own_location():
     assert "invalid YAML" in message
     assert 'in "<file>", line 3' in message
     assert "in line " not in message, message
+
+
+@pytest.mark.parametrize(
+    ("chart_type", "y"),
+    [
+        ("bar", "      y: orders  # the measure\n"),
+        ("line", "      y:\n        - orders  # the measure\n"),
+        ("bar", "      y: [orders]  # the measure\n"),
+    ],
+)
+def test_saving_a_chart_keeps_the_y_spelling_the_author_wrote(tmp_path, chart_type, y):
+    chart = f"    chart:\n      type: {chart_type}\n      x: day\n" + y
+    doc = (
+        "title: D\n"
+        "source: {type: duckdb, database: ':memory:'}\n"
+        "tiles:\n"
+        "  - title: Orders\n"
+        "    sql: SELECT 'mon' AS day, 3 AS orders\n" + chart
+    )
+    (tmp_path / "d.yaml").write_text(doc)
+    store = DashboardStore(tmp_path)
+    _, _, etag = store.load("d")
+    for sent in ("orders", ["orders"]):
+        payload = {
+            "id": "orders",
+            "title": "Orders",
+            "query": "orders",
+            "chart": {"type": chart_type, "x": "day", "y": sent, "legend": False},
+        }
+        (tmp_path / "d.yaml").write_text(doc)
+        _, _, etag = store.load("d")
+        store.upsert_tile("d", payload, "SELECT 'mon' AS day, 3 AS orders", etag)
+        assert (tmp_path / "d.yaml").read_text() == doc + "      legend: false\n", sent
