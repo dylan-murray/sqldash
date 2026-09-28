@@ -2838,3 +2838,25 @@ def test_replacing_or_deleting_chart_values_keeps_every_other_line(tmp_path, bef
     )
     text = (tmp_path / "d.yaml").read_text()
     assert text == _GRID_HEAD + after + _GRID_TAIL, text
+
+
+TILE_MERGE_REFERENCES = (
+    "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+    'queries: {q: "SELECT 1 AS a, 2 AS b"}\n'
+    "tiles:\n"
+    "  - &base\n"
+    "    title: A\n"
+    "    query: q\n"
+    "    chart:\n"
+    "      type: bar\n"
+    "      references: [{y: 10, label: Goal}]\n"
+    "  - <<: *base\n"
+    "    title: B\n"
+)
+
+
+def test_editing_a_tile_that_merges_another_leaves_its_references_alone(tmp_path):
+    (tmp_path / "d.yaml").write_text(TILE_MERGE_REFERENCES)
+    text, refs = _save_refs(tmp_path, "b", [{"y": 20, "label": "Goal"}])
+    assert refs == {"a": [{"y": 10, "label": "Goal"}], "b": [{"y": 20, "label": "Goal"}]}, text
+    assert text.startswith(TILE_MERGE_REFERENCES.split("  - <<: *base")[0]), text

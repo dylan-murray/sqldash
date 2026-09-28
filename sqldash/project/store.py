@@ -527,9 +527,14 @@ def _same_chart_value(key: str, written: Any, incoming: Any) -> bool:
     return written == incoming
 
 
-def _shares_yaml(node: Any, seen: set[int] | None = None) -> bool:
+def _shares_yaml(node: Any, seen: set[int] | None = None, ancestors: tuple = ()) -> bool:
     """Whether a subtree holds an anchor, an alias or a `<<` merge key, any of
-    which makes an in-place edit reach past the tile being saved."""
+    which makes an in-place edit reach past the tile being saved. A mapping
+    above it counts too: a tile that is anchored, or that takes its keys from
+    another through `<<`, can share the very chart it seems to own."""
+    for above in ancestors:
+        if getattr(above.anchor, "value", None) is not None or above.merge:
+            return True
     seen = set() if seen is None else seen
     anchor = getattr(node, "anchor", None)
     if anchor is not None and getattr(anchor, "value", None) is not None:
@@ -588,7 +593,7 @@ def _write_chart(existing: CommentedMap, slim: dict[str, Any]) -> None:
     if not isinstance(node, CommentedMap):
         _put_key(existing, "chart", _flow(slim))
         return
-    if _shares_yaml(node):
+    if _shares_yaml(node, ancestors=(existing,)):
         node = existing["chart"] = _materialized(node)
     for key, value in slim.items():
         if key == "references" and isinstance(node.get(key), CommentedSeq):
