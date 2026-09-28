@@ -583,6 +583,8 @@ function xyOption(spec, result, forcedColor, height = 0, width = 0) {
   }
 
   const combo = comboLayout(spec, series, horizontal);
+  const perSeriesFormats =
+    typeof spec.format === "object" && Object.keys(spec.format ?? {}).length > 0;
   const colors = forcedColor && series.length === 1 ? [forcedColor] : palette();
   option.color = colors;
   option.series = series.map((s, i) => {
@@ -593,7 +595,7 @@ function xyOption(spec, result, forcedColor, height = 0, width = 0) {
       common.name = combo.names[i];
       common.yAxisIndex = combo.axes[i];
     }
-    if (combo || (s.column && spec.format?.[s.column])) {
+    if (combo || (s.column && perSeriesFormats)) {
       const format = seriesFormat(spec, s.column);
       common.tooltip = { valueFormatter: (v) => formatValue(v, format) };
     }

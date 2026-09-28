@@ -164,3 +164,12 @@ test("a chart whose only series are on the right comes back to the left axis", (
     {}
   );
 });
+
+test("a series left on the default format reads as a plain number beside a currency one", () => {
+  const option = translate(
+    { type: "bar", x: "week", y: ["revenue", "orders"], format: { revenue: "currency" } },
+    weekly
+  );
+  assert.equal(option.series[0].tooltip.valueFormatter(51000), "$51,000");
+  assert.equal(option.series[1].tooltip.valueFormatter(12), "12");
+});
