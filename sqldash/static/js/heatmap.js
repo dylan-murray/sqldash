@@ -5,6 +5,7 @@ import {
   cssVar,
   escapeHtml,
   exactDecimal,
+  formatSettings,
   formatValue,
   humanize,
   seriesFormat,
@@ -25,9 +26,36 @@ export function categoryLabel(value) {
   return typeof value === "object" ? JSON.stringify(value) : String(value);
 }
 
-export function categoryKey(value) {
+function numericKey(value) {
+  const exact = exactDecimal(typeof value === "number" ? String(value) : value);
+  if (!exact) return null;
+  const digits = exact.frac ? `${exact.int}.${exact.frac}` : exact.int;
+  return `n${exact.neg && digits !== "0" ? "-" : ""}${digits}`;
+}
+
+const SCALAR_PREFIX = { number: "n", boolean: "b", string: "s" };
+
+export function categoryKey(value, type) {
   if (isNull(value)) return "0";
-  return `${typeof value === "object" ? "j" : "s"}${categoryLabel(value)}`;
+  if (typeof value === "object") return `j${JSON.stringify(value)}`;
+  if (NUMERIC_TYPES.has(type) || typeof value === "number") {
+    const key = numericKey(value);
+    if (key) return key;
+  }
+  return `${SCALAR_PREFIX[typeof value] ?? "s"}${String(value)}`;
+}
+
+function pinKey(raw, type, seen) {
+  const key = categoryKey(raw, type);
+  if (seen.has(key) || typeof raw === "string") return key;
+  const text = `s${String(raw)}`;
+  return seen.has(text) ? text : key;
+}
+
+const OFFSET = /(?:Z|[+-]\d\d:?\d\d)$/;
+
+function instant(label) {
+  return OFFSET.test(label) ? Date.parse(label) : NaN;
 }
 
 function numericValue(value) {
@@ -41,19 +69,24 @@ function numericValue(value) {
 
 function compareKeys(type) {
   if (NUMERIC_TYPES.has(type)) return (a, b) => compareNumbers(a.raw, b.raw);
-  return (a, b) => (a.label < b.label ? -1 : a.label > b.label ? 1 : 0);
+  const byText = (a, b) => (a.label < b.label ? -1 : a.label > b.label ? 1 : 0);
+  if (type !== "timestamp") return byText;
+  return (a, b) => {
+    const diff = instant(a.label) - instant(b.label);
+    return Number.isFinite(diff) && diff !== 0 ? diff : byText(a, b);
+  };
 }
 
 function orderCategories(values, type, explicit) {
   const seen = new Map();
   for (const raw of values) {
-    const key = categoryKey(raw);
+    const key = categoryKey(raw, type);
     if (!seen.has(key)) seen.set(key, { key, raw, label: categoryLabel(raw) });
   }
   const pinned = new Map();
   for (const raw of explicit ?? []) {
-    const key = categoryKey(raw);
-    if (!pinned.has(key)) pinned.set(key, { key, raw, label: categoryLabel(raw) });
+    const key = pinKey(raw, type, seen);
+    if (!pinned.has(key)) pinned.set(key, seen.get(key) ?? { key, raw, label: categoryLabel(raw) });
   }
   let rest = [...seen.values()].filter((c) => !pinned.has(c.key));
   const nullLast = rest.filter((c) => isNull(c.raw));
@@ -67,7 +100,8 @@ function aggregateOf(kind, values, rows) {
   if (!values.length) return null;
   if (kind === "sum" || kind === "avg") {
     const sum = values.reduce((a, b) => a + b, 0);
-    return kind === "sum" ? sum : sum / values.length;
+    if (kind === "sum" || Number.isFinite(sum)) return kind === "sum" ? sum : sum / values.length;
+    return values.reduce((a, b) => a + b / values.length, 0);
   }
   let best = values[0];
   for (const v of values) if (kind === "min" ? v < best : v > best) best = v;
@@ -94,9 +128,10 @@ export function buildCells(result, spec, { limit = MAX_CATEGORIES } = {}) {
   const groups = new Map();
   let hiddenRows = 0;
   let nonNumeric = 0;
+  const kind = spec.aggregate ?? null;
   for (const row of result.rows) {
-    const i = xIndex.get(categoryKey(row[xi]));
-    const j = yIndex.get(categoryKey(row[yi]));
+    const i = xIndex.get(categoryKey(row[xi], type(xi)));
+    const j = yIndex.get(categoryKey(row[yi], type(yi)));
     if (i === undefined || j === undefined) {
       hiddenRows += 1;
       continue;
@@ -108,14 +143,15 @@ export function buildCells(result, spec, { limit = MAX_CATEGORIES } = {}) {
     const raw = vi >= 0 ? row[vi] : null;
     const n = numericValue(raw);
     if (n !== undefined) cell.values.push(n);
-    else if (raw !== null && raw !== undefined) nonNumeric += 1;
+    else if (kind !== "count" && !isNull(raw)) nonNumeric += 1;
   }
-  const kind = spec.aggregate ?? null;
   const cells = [];
   let duplicates = 0;
+  let overflow = 0;
   for (const cell of groups.values()) {
     if (!kind && cell.rows > 1) duplicates += 1;
     const value = kind ? aggregateOf(kind, cell.values, cell.rows) : (cell.values[0] ?? null);
+    if (value !== null && !Number.isFinite(value)) overflow += 1;
     cells.push({ i: cell.i, j: cell.j, rows: cell.rows, value });
   }
   return {
@@ -123,6 +159,7 @@ export function buildCells(result, spec, { limit = MAX_CATEGORIES } = {}) {
     ys,
     cells,
     duplicates,
+    overflow,
     hiddenRows,
     nonNumeric,
     xTotal: allX.length,
@@ -186,17 +223,22 @@ export function colorRange(values, palette, midpoint) {
   return { min, max };
 }
 
+function countText(n) {
+  return n.toLocaleString(formatSettings().locale);
+}
+
+export const OVERFLOW_NOTE = "Some cells add up to more than a number can hold";
+
 export function heatmapScope(built, spec, result) {
   const parts = [];
-  if (result.truncated) parts.push(`first ${result.row_count.toLocaleString()} rows only`);
   if (built.xTotal > built.xs.length) {
-    parts.push(`${built.xs.length} of ${built.xTotal.toLocaleString()} ${humanize(spec.x)} values`);
+    parts.push(`${built.xs.length} of ${countText(built.xTotal)} ${humanize(spec.x)} values`);
   }
   if (built.yTotal > built.ys.length) {
-    parts.push(`${built.ys.length} of ${built.yTotal.toLocaleString()} ${humanize(spec.y)} values`);
+    parts.push(`${built.ys.length} of ${countText(built.yTotal)} ${humanize(spec.y)} values`);
   }
   if (built.nonNumeric) {
-    parts.push(`${built.nonNumeric.toLocaleString()} non-numeric ${humanize(spec.value)} left out`);
+    parts.push(`${countText(built.nonNumeric)} non-numeric ${humanize(spec.value)} left out`);
   }
   const text = parts.join(" · ");
   return text && text.charAt(0).toUpperCase() + text.slice(1);
@@ -211,7 +253,7 @@ export function cellMeasure(spec) {
 
 export function duplicateNote(count) {
   return (
-    `${count.toLocaleString()} ${count === 1 ? "cell has" : "cells have"} more than one row. ` +
+    `${countText(count)} ${count === 1 ? "cell has" : "cells have"} more than one row. ` +
     "Set aggregate (sum, avg, count, min or max) or aggregate in SQL."
   );
 }
@@ -276,7 +318,7 @@ export function heatmapOption(spec, result, forcedColor, height = 0) {
       `<div style="font-weight:600;margin-bottom:4px">${escapeHtml(built.ys[cell.j])}` +
       ` · ${escapeHtml(built.xs[cell.i])}</div>`;
     if (!cell.rows) return `${head}<span style="opacity:.7">No rows</span>`;
-    const rows = `${cell.rows.toLocaleString()} ${cell.rows === 1 ? "row" : "rows"}`;
+    const rows = `${countText(cell.rows)} ${cell.rows === 1 ? "row" : "rows"}`;
     const value =
       cell.value === null
         ? `<span style="opacity:.7">No ${escapeHtml(humanize(spec.value ?? "value"))}</span>`
@@ -284,7 +326,8 @@ export function heatmapOption(spec, result, forcedColor, height = 0) {
     return `${head}${p.marker} ${value}<div style="opacity:.6;margin-top:2px">${rows}</div>`;
   };
 
-  const filled = built.duplicates ? [] : built.cells.filter((c) => c.value !== null);
+  const blocked = built.duplicates || built.overflow;
+  const filled = blocked ? [] : built.cells.filter((c) => c.value !== null);
   const range = colorRange(
     filled.map((c) => c.value),
     palette,
@@ -292,7 +335,7 @@ export function heatmapOption(spec, result, forcedColor, height = 0) {
   );
   const present = new Set(filled.map((c) => `${c.i}|${c.j}`));
   const gaps = [];
-  if (!built.duplicates) {
+  if (!blocked) {
     const byId = new Map(built.cells.map((c) => [`${c.i}|${c.j}`, c]));
     for (let j = 0; j < built.ys.length; j++) {
       for (let i = 0; i < built.xs.length; i++) {
@@ -384,6 +427,7 @@ export function heatmapOption(spec, result, forcedColor, height = 0) {
     },
   ];
   if (built.duplicates) setEmptyReason(option, duplicateNote(built.duplicates));
+  else if (built.overflow) setEmptyReason(option, OVERFLOW_NOTE);
   else if (!filled.length) setEmptyReason(option, "No values to plot");
   if (scope) {
     option.graphic = [

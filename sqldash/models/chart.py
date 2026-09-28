@@ -5,7 +5,15 @@ import re
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    FiniteFloat,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 ChartType = Literal["line", "bar", "area", "scatter", "pie", "heatmap", "big_number", "table"]
 REFERENCE_CHART_TYPES = ("line", "bar", "area", "scatter")
@@ -27,6 +35,7 @@ ReferenceColor = Literal[
 NAMED_FORMATS = ("number", "currency", "percent", "compact", "date")
 CURRENCY_CODE = re.compile(r"^[A-Z]{3}$")
 HEATMAP_FIELDS = ("aggregate", "palette", "midpoint", "x_order", "y_order")
+EXACT_IN_BROWSER = 2**53 - 1
 IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -150,6 +159,12 @@ class ChartSpec(BaseModel):
             for column, fmt in v.items():
                 validate_format(fmt, f"format for '{column}'")
         return v
+
+    @field_serializer("x_order", "y_order", when_used="json")
+    def exact_order(self, order: list[str | int | float | bool] | None):
+        if order is None:
+            return None
+        return [str(v) if type(v) is int and abs(v) > EXACT_IN_BROWSER else v for v in order]
 
     @model_validator(mode="after")
     def check_midpoint(self):

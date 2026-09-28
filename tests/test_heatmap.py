@@ -2,11 +2,13 @@
 keeps them on heatmaps, how an edit writes them back, and what the browser
 draws from real DuckDB results."""
 
+import json
 import time
 
 import pytest
 from pydantic import ValidationError
 
+from sqldash.api.helpers import client_payload
 from sqldash.lint import lint_project
 from sqldash.models.chart import ChartSpec
 from sqldash.project.store import DashboardStore
@@ -115,6 +117,32 @@ def test_a_saved_heatmap_reloads_and_edits_one_key(tmp_path):
     assert reloaded.tiles[0].chart.y_order == ["Mon", "Tue", "Wed"]
 
 
+def test_order_integers_too_big_for_the_browser_round_trip_exactly(tmp_path):
+    doc = (
+        "title: D\n"
+        "source: {type: duckdb, database: ':memory:'}\n"
+        "tiles:\n"
+        "  - title: Big\n"
+        "    sql: SELECT 9007199254740993::BIGINT AS k, 'a' AS r, 1 AS v\n"
+        "    chart: {type: heatmap, x: k, y: r, value: v, x_order: [9007199254740993, 7]}\n"
+    )
+    (tmp_path / "d.yaml").write_text(doc)
+    store = DashboardStore(tmp_path)
+    dashboard, _, etag = store.load("d")
+    wire = client_payload("d", dashboard, etag)
+    chart = json.loads(json.dumps(wire))["dashboard"]["tiles"][0]["chart"]
+    assert chart["x_order"] == ["9007199254740993", 7]
+    payload = {
+        "id": "big",
+        "title": "Big",
+        "query": "big",
+        "chart": {**chart, "aggregate": "sum"},
+    }
+    store.upsert_tile("d", payload, "SELECT 9007199254740993::BIGINT AS k, 'a' AS r, 1 AS v", etag)
+    text = (tmp_path / "d.yaml").read_text()
+    assert "x_order: [9007199254740993, 7], aggregate: sum}" in text, text
+
+
 def _browser_available() -> bool:
     try:
         from playwright.sync_api import sync_playwright
@@ -160,6 +188,9 @@ tiles:
     format: currency
     chart: {{type: heatmap, x: c, y: r, value: v}}
     sql: SELECT * FROM (VALUES ('a', 'x', 12700.5), ('b', 'x', 137800.25)) t(r, c, v)
+  - title: Overflow
+    chart: {{type: heatmap, x: c, y: r, value: v, aggregate: sum}}
+    sql: SELECT * FROM (VALUES ('a', 'x', 1e308), ('a', 'x', 1e308)) t(r, c, v)
 """
 
 READ_TEXT = """() => Object.fromEntries([...document.querySelectorAll('.tile')].map(tile => {
@@ -256,6 +287,8 @@ def test_heatmaps_render_real_duckdb_cells_in_both_themes_and_on_resize(tmp_path
         assert region["range"] == [-10, 30], key
 
         assert state["duplicates"]["filled"] == [], key
+        assert state["overflow"]["filled"] == [], key
+        assert state["overflow"]["empty"] == "Some cells add up to more than a number can hold", key
         assert state["duplicates"]["empty"].startswith("1 cell has more than one row"), key
 
         many = state["many"]

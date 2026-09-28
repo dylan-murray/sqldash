@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { inferSpec, pruneSpecForType } from "../sqldash/static/js/charts.js";
+import { inferSpec, pruneSpecForType, setFormatConfig } from "../sqldash/static/js/charts.js";
 import {
   buildCells,
   cellMeasure,
@@ -13,6 +13,8 @@ import {
   heatmapScope,
   MAX_CATEGORIES,
 } from "../sqldash/static/js/heatmap.js";
+
+setFormatConfig({ locale: "en-US" });
 
 const result = (columns, rows, extra = {}) => ({
   columns: columns.map(([name, type]) => ({ name, type })),
@@ -113,7 +115,7 @@ test("high cardinality is capped per axis and the scope says so", () => {
   assert.equal(built.hiddenRows, 90);
   assert.equal(
     heatmapScope(built, { x: "x", y: "y", value: "v" }, { truncated: true, row_count: 150 }),
-    "First 150 rows only · 60 of 150 x values"
+    "60 of 150 x values"
   );
 });
 
@@ -230,5 +232,111 @@ test("the diverging midpoint stands apart from the tile in both themes", () => {
     assert.ok(Math.abs(lum(neutral) - surfaceLum[name]) > 0.1, `${name} ${neutral}`);
     assert.equal(stops[0], "#d95926");
     assert.equal(stops[4], "#3987e5");
+  }
+});
+
+test("JSON scalars of different types are different categories", () => {
+  const r = result(
+    [["x", "json"], ["y", "string"], ["v", "integer"]],
+    [
+      [1, "a", 10],
+      ["1", "a", 20],
+      [true, "a", 1],
+      ["true", "a", 2],
+    ]
+  );
+  const built = buildCells(r, { x: "x", y: "y", value: "v", aggregate: "sum" });
+  assert.equal(built.cells.length, 4);
+  assert.equal(buildCells(r, { x: "x", y: "y", value: "v" }).duplicates, 0);
+});
+
+test("numeric order entries pin decimal categories by value", () => {
+  const r = result(
+    [["x", "decimal"], ["y", "string"], ["v", "integer"]],
+    [
+      ["1.00", "a", 1],
+      ["2.00", "a", 2],
+    ]
+  );
+  const built = buildCells(r, { x: "x", y: "y", value: "v", x_order: [2, 1] });
+  assert.deepEqual(built.xs, ["2.00", "1.00"]);
+  assert.equal(built.cells.length, 2);
+  const big = result(
+    [["x", "integer"], ["y", "string"], ["v", "integer"]],
+    [
+      ["9007199254740992", "a", 1],
+      ["9007199254740993", "a", 2],
+    ]
+  );
+  const pinned = buildCells(big, { x: "x", y: "y", value: "v", x_order: ["9007199254740993"] });
+  assert.deepEqual(pinned.xs, ["9007199254740993", "9007199254740992"]);
+});
+
+test("number and boolean pins still match a text column", () => {
+  const r = result(
+    [["x", "string"], ["y", "string"], ["v", "integer"]],
+    [
+      ["2020", "a", 1],
+      ["2021", "a", 2],
+      ["true", "a", 3],
+    ]
+  );
+  assert.deepEqual(buildCells(r, { x: "x", y: "y", value: "v", x_order: [2021, true] }).xs, [
+    "2021",
+    "true",
+    "2020",
+  ]);
+});
+
+test("an average of huge values stays finite, and a sum too big to hold is flagged", () => {
+  const r = result(
+    [["x", "string"], ["y", "string"], ["v", "float"]],
+    [
+      ["a", "b", 1e308],
+      ["a", "b", 1e308],
+    ]
+  );
+  assert.equal(buildCells(r, { x: "x", y: "y", value: "v", aggregate: "avg" }).cells[0].value, 1e308);
+  const summed = buildCells(r, { x: "x", y: "y", value: "v", aggregate: "sum" });
+  assert.equal(summed.overflow, 1);
+  assert.equal(buildCells(r, { x: "x", y: "y", value: "v", aggregate: "avg" }).overflow, 0);
+});
+
+test("timestamps with offsets sort by instant", () => {
+  const r = result(
+    [["x", "timestamp"], ["y", "string"], ["v", "integer"]],
+    [
+      ["2026-01-01T00:30:00+00:00", "a", 1],
+      ["2026-01-01T01:00:00+02:00", "a", 2],
+    ]
+  );
+  assert.deepEqual(buildCells(r, { x: "x", y: "y", value: "v" }).xs, [
+    "2026-01-01T01:00:00+02:00",
+    "2026-01-01T00:30:00+00:00",
+  ]);
+});
+
+test("count keeps every row, so nothing is reported as left out", () => {
+  const r = result([["x", "string"], ["y", "string"], ["v", "string"]], [["a", "b", "hello"]]);
+  const spec = { x: "x", y: "y", value: "v", aggregate: "count" };
+  const built = buildCells(r, spec);
+  assert.equal(built.cells[0].value, 1);
+  assert.equal(heatmapScope(built, spec, r), "");
+});
+
+test("the row cap is left to the tile note, and counts follow the dashboard locale", () => {
+  const rows = result(
+    [["x", "string"], ["y", "string"], ["v", "integer"]],
+    Array.from({ length: 1500 }, (_, i) => [`x${i}`, "y", i]),
+    { truncated: true, row_count: 1500 }
+  );
+  const spec = { x: "x", y: "y", value: "v" };
+  const built = buildCells(rows, spec);
+  assert.equal(heatmapScope(built, spec, rows), "60 of 1,500 x values");
+  setFormatConfig({ locale: "de-DE" });
+  try {
+    assert.equal(heatmapScope(built, spec, rows), "60 of 1.500 x values");
+  } finally {
+    setFormatConfig({ locale: "en-US" });
   }
 });

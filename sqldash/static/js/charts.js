@@ -29,6 +29,10 @@ export function setFormatConfig({ locale, currency } = {}) {
   };
 }
 
+export function formatSettings() {
+  return formatConfig;
+}
+
 function isPlainRecord(value) {
   if (Array.isArray(value)) return true;
   return Object.getPrototypeOf(value) === Object.prototype;

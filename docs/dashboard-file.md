@@ -105,7 +105,8 @@ you want, like weekdays. A diverging palette is symmetric around its midpoint,
 so the darkest color on each side means the same distance from it.
 
 Each axis shows at most 60 categories, in that order; the line above the chart
-says how many were left out, and a result cut short by the row cap says so too.
+says how many were left out, and a result cut short by the row cap gets the
+tile's usual note under the chart.
 Long labels are shortened on the axis and shown in full in the tooltip. Clicking
 a cell does not cross-filter the dashboard: a cell is two values at once, and a
 filter takes one.
