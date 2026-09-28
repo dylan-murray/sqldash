@@ -135,3 +135,40 @@ def test_reordering_a_cross_filter_is_saved_since_the_first_entry_is_the_toggle(
         saved = store.load("overview")[0].tiles[0].cross_filter
         assert (list(saved) if saved else saved) == (list(mapping) if mapping else None)
         assert "\n\n  # The next tile\n" in (tmp_path / "overview.yaml").read_text()
+
+
+OLD_MAPPINGS = {
+    "block": "    cross_filter:\n      region: region\n",
+    "flow": "    cross_filter: {region: region}\n",
+    "off": "    cross_filter: false\n",
+}
+NEW_MAPPINGS = {
+    "flow": (
+        {"minimum": "revenue", "region": "region"},
+        "    cross_filter: {minimum: revenue, region: region}\n",
+    ),
+    "off": (False, "    cross_filter: false\n"),
+    "removed": (None, ""),
+}
+
+
+def _mapping_file(mapping: str, where: str) -> str:
+    sql = "    sql: \"SELECT 'us' AS region, 10 AS revenue\"\n"
+    note = "\n    # This query explains itself\n"
+    head = "  - title: By region\n    chart: table\n"
+    body = head + (mapping + note + sql if where == "middle" else sql + mapping)
+    return (
+        HEAD + "tiles:\n" + body + "\n  # The next tile\n  - {title: Next, sql: 'SELECT 1 AS n'}\n"
+    )
+
+
+@pytest.mark.parametrize("where", ["middle", "last"])
+@pytest.mark.parametrize("new", list(NEW_MAPPINGS))
+@pytest.mark.parametrize("old", list(OLD_MAPPINGS))
+def test_rewriting_a_cross_filter_changes_only_its_own_lines(tmp_path, old, new, where):
+    (tmp_path / "overview.yaml").write_text(_mapping_file(OLD_MAPPINGS[old], where))
+    value, lines = NEW_MAPPINGS[new]
+    store = DashboardStore(tmp_path)
+    tile = {"id": "by_region", "title": "By region", "chart": "table", "query": "by_region"}
+    store.upsert_tile("overview", {**tile, "cross_filter": value}, None, store.load("overview")[2])
+    assert (tmp_path / "overview.yaml").read_text() == _mapping_file(lines, where)

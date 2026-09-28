@@ -1,5 +1,5 @@
 import { escapeHtml } from "./charts.js";
-import { clickValue, clickedRow } from "./drill.js";
+import { clickValue, clickedRow, optionText } from "./drill.js";
 
 const FUNNEL =
   '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" ' +
@@ -26,14 +26,24 @@ export function offValue(def, options = []) {
   return fallback === null || fallback === undefined ? "" : String(fallback);
 }
 
+function renderedOptions(def) {
+  return def.options?.map((o) => (typeof o === "boolean" ? (o ? "True" : "False") : String(o)));
+}
+
+function entryValue({ column, def }, row, columns) {
+  const at = columns.findIndex((c) => c.name === column);
+  if (at < 0) return { error: `column '${column}' is not in this tile's result` };
+  const { text, error } = clickValue(row?.[at], def.type, column);
+  if (error) return { error };
+  return { text: optionText(row[at], text, renderedOptions(def)) };
+}
+
 export function picked(plan, row, columns) {
   const values = {};
-  for (const { name, column, def } of plan.entries) {
-    const at = columns.findIndex((c) => c.name === column);
-    if (at < 0) return { error: `column '${column}' is not in this tile's result` };
-    const { text, error } = clickValue(row?.[at], def.type, column);
+  for (const entry of plan.entries) {
+    const { text, error } = entryValue(entry, row, columns);
     if (error) return { error };
-    values[name] = text;
+    values[entry.name] = text;
   }
   return { values };
 }
@@ -58,11 +68,11 @@ export function toggled(plan, values, current, offs) {
 }
 
 export function rowIsPicked(plan, row, columns, active) {
-  const { values } = picked(plan, row, columns);
-  return (
-    Boolean(values) &&
-    plan.entries.every(({ name }) => !(name in active) || values[name] === active[name])
-  );
+  return plan.entries.every((entry) => {
+    if (!(entry.name in active)) return true;
+    const { text, error } = entryValue(entry, row, columns);
+    return !error && text === active[entry.name];
+  });
 }
 
 export function dimUnpicked(option, spec, result, plan, active, opacity = 0.28) {
@@ -88,7 +98,7 @@ export function dimUnpicked(option, spec, result, plan, active, opacity = 0.28) 
     });
     if (!line || !missed) return { data };
     const fade = (style) => ({ opacity: (style?.opacity ?? 1) * opacity });
-    const faded = { data, showSymbol: true, lineStyle: fade(series.lineStyle) };
+    const faded = { data, showSymbol: true, showAllSymbol: true, lineStyle: fade(series.lineStyle) };
     if (series.areaStyle) faded.areaStyle = fade(series.areaStyle);
     return faded;
   });

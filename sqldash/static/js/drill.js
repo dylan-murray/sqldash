@@ -22,10 +22,31 @@ function calendarDay(text) {
   return same ? day : null;
 }
 
+const lookups = new WeakMap();
+
+function lookup(result, name, build) {
+  let cache = lookups.get(result);
+  if (!cache) lookups.set(result, (cache = new Map()));
+  if (!cache.has(name)) cache.set(name, build());
+  return cache.get(name);
+}
+
+function rowsBy(rows, at, keyOf) {
+  const found = new Map();
+  for (const row of rows) {
+    const key = keyOf(row[at]);
+    if (!found.has(key)) found.set(key, []);
+    found.get(key).push(row);
+  }
+  return found;
+}
+
 export function rowForPoint(spec, result, point) {
   const rows = result.rows ?? [];
   if (!rows.length) return null;
-  const s = inferSpec({ ...spec, y: spec.y ? [...spec.y] : spec.y }, result);
+  const s = lookup(result, spec, () =>
+    inferSpec({ ...spec, y: spec.y ? [...spec.y] : spec.y }, result)
+  );
   const index = (name) => result.columns.findIndex((c) => c.name === name);
   const i = point.dataIndex;
   if (s.type === "big_number") return rows[0];
@@ -33,19 +54,24 @@ export function rowForPoint(spec, result, point) {
   if (["line", "bar", "area", "scatter"].includes(s.type)) {
     if (s.group_by && (s.y?.length ?? 0) === 1) {
       const gi = index(s.group_by);
-      const members = rows.filter((row) => String(row[gi] ?? "∅") === String(point.seriesName));
-      return members[i] ?? null;
+      const groups = lookup(result, `group:${gi}`, () =>
+        rowsBy(rows, gi, (v) => String(v ?? "∅"))
+      );
+      return groups.get(String(point.seriesName))?.[i] ?? null;
     }
     return rows[i] ?? null;
   }
   const key = index(s.x ?? s.label);
   if (key < 0) return rows[i] ?? null;
-  return rows.find((row) => String(row[key]) === String(point.name)) ?? null;
+  const named = lookup(result, `name:${key}`, () => rowsBy(rows, key, (v) => String(v)));
+  return named.get(String(point.name))?.[0] ?? null;
 }
 
 export function clickedRow(spec, result, point) {
   const drawn = rowForPoint(spec, result, point);
-  return result.unshifted?.[result.rows.indexOf(drawn)] ?? drawn;
+  if (!result.unshifted || !drawn) return drawn;
+  const at = lookup(result, "at", () => new Map(result.rows.map((row, i) => [row, i])));
+  return result.unshifted[at.get(drawn)] ?? drawn;
 }
 
 export function clickValue(value, type, column) {

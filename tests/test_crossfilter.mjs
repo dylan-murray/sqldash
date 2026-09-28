@@ -111,6 +111,7 @@ test("a line selection fades the stroke and area and draws only the picked point
   const spec = { type: "area", x: "day", y: ["n"] };
   const [series] = dimUnpicked(option, spec, trend, single, { day: "2026-01-10" });
   assert.equal(series.showSymbol, true);
+  assert.equal(series.showAllSymbol, true);
   assert.ok(Math.abs(series.lineStyle.opacity - 0.55 * 0.28) < 1e-9);
   assert.equal(series.areaStyle.opacity, 0.28);
   assert.equal(series.data[9].itemStyle, undefined);
@@ -165,4 +166,53 @@ test("a compare chart dims against the row a point came from, not where it is dr
     dimUnpicked(option, spec, merged, byDay, active).map((s) => s.data[0].itemStyle?.opacity ?? 1);
   assert.deepEqual(opacity({ day: "2025-01-10" }), [0.28, 1]);
   assert.deepEqual(opacity({ day: "2026-01-10" }), [1, 0.28]);
+});
+
+test("dimming a 10k-row grouped chart is linear, not a scan of the result per mark", () => {
+  const regions = Array.from({ length: 10 }, (_, i) => `r${i}`);
+  const rows = Array.from({ length: 10000 }, (_, i) => [regions[i % 10], `d${Math.floor(i / 10)}`, i]);
+  const big = {
+    columns: [
+      { name: "region", type: "string" },
+      { name: "day", type: "string" },
+      { name: "n", type: "integer" },
+    ],
+    rows,
+  };
+  const option = {
+    series: regions.map((name) => ({
+      type: "bar",
+      name,
+      data: rows.filter((r) => r[0] === name).map((r) => [r[1], r[2]]),
+    })),
+  };
+  const spec = { type: "bar", x: "day", y: ["n"], group_by: "region" };
+  const single = crossFilterPlan({ cross_filter: { region: "region" } }, filters);
+  const times = [];
+  let series;
+  for (let run = 0; run < 5; run++) {
+    const fresh = { ...big, rows: [...rows] };
+    const started = performance.now();
+    series = dimUnpicked(option, spec, fresh, single, { region: "r3" });
+    times.push(performance.now() - started);
+  }
+  assert.equal(series[3].data[5].itemStyle, undefined);
+  assert.equal(series[4].data[5].itemStyle.opacity, 0.28);
+  const took = Math.min(...times);
+  assert.ok(took < 100, `dimming took ${Math.round(took)}ms at best`);
+});
+
+test("a null under a filter that is not narrowing anything does not unpick the row", () => {
+  const active = activeValues(plan, { region: "eu", channel: "" }, offs);
+  assert.equal(rowIsPicked(plan, ["eu", null, 1], result.columns, active), true);
+  assert.equal(rowIsPicked(plan, ["us", null, 1], result.columns, active), false);
+  assert.equal(rowIsPicked(plan, [null, "web", 1], result.columns, active), false);
+});
+
+test("a boolean click sets the option its filter bar renders", () => {
+  const flags = crossFilterPlan({ cross_filter: { active: "active" } }, [
+    { name: "active", type: "select", options: [true, false] },
+  ]);
+  const { values } = picked(flags, [true], [{ name: "active", type: "boolean" }]);
+  assert.deepEqual(values, { active: "True" });
 });

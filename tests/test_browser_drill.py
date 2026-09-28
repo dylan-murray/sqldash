@@ -340,7 +340,12 @@ filters:
   - {name: channel, type: select, options: [all, web]}
   - {name: minimum, type: number, default: 0}
   - {name: day, type: date}
+  - {name: cat, type: text}
 tiles:
+  - title: Categories
+    chart: {type: line, x: cat, y: [n]}
+    cross_filter: {cat: cat}
+    sql: "SELECT 'category_' || i AS cat, i AS n FROM range(100) t(i) ORDER BY i"
   - title: Pair
     chart: table
     cross_filter: {region: region, channel: channel}
@@ -734,6 +739,7 @@ def test_another_point_on_a_long_selected_line_can_still_be_picked(page, edges):
     page.goto(f"{edges}/d/xf?f_day=2026-01-10")
     _wait_tiles(page)
     mount = '.tile[data-tile-id="trend"] .chart-mount'
+    page.locator('.tile[data-tile-id="trend"]').scroll_into_view_if_needed()
     page.wait_for_function(
         f"() => {{ const m = document.querySelector('{mount}'); "
         "return Boolean(m && echarts.getInstanceByDom(m)); }"
@@ -767,3 +773,24 @@ def test_a_cross_filter_change_elsewhere_keeps_a_failed_tile_showing_its_error(p
     page.wait_for_function("() => location.search.includes('f_region=eu')")
     page.wait_for_timeout(500)
     assert tile.locator(".tile-status .err").count() == 1
+
+
+def test_a_picked_category_keeps_its_marker_on_a_dense_line(page, edges):
+    page.goto(f"{edges}/d/xf?f_cat=category_1")
+    _wait_tiles(page)
+    mount = '.tile[data-tile-id="categories"] .chart-mount'
+    page.wait_for_function(
+        f"() => {{ const m = document.querySelector('{mount}'); "
+        "return Boolean(m && echarts.getInstanceByDom(m)); }"
+    )
+    page.wait_for_timeout(300)
+    drawn = page.evaluate(
+        """(mount) => {
+          const chart = echarts.getInstanceByDom(document.querySelector(mount));
+          const data = chart.getModel().getSeriesByIndex(0).getData();
+          const el = data.getItemGraphicEl(1);
+          return Boolean(el) && !el.invisible;
+        }""",
+        mount,
+    )
+    assert drawn
