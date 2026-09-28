@@ -157,7 +157,7 @@ test("a chart whose only series are on the right comes back to the left axis", (
       series: { rate: { type: "line", axis: "right" } },
       axes: { right: { title: "Rate" } },
     }),
-    { series: { rate: { type: "line" } } }
+    { series: { rate: { type: "line" } }, axes: { left: { title: "Rate" } } }
   );
   assert.deepEqual(
     cleanCombo({ type: "line", y: ["rate"], series: { rate: { axis: "right" } } }),
@@ -172,4 +172,44 @@ test("a series left on the default format reads as a plain number beside a curre
   );
   assert.equal(option.series[0].tooltip.valueFormatter(51000), "$51,000");
   assert.equal(option.series[1].tooltip.valueFormatter(12), "12");
+});
+
+test("series moved back to the left take their right axis's title, bounds and format", () => {
+  assert.deepEqual(
+    cleanCombo({
+      type: "bar",
+      y: ["rate"],
+      series: { rate: { type: "line", axis: "right" } },
+      axes: {
+        left: { title: "Revenue", min: 10000, max: 100000 },
+        right: { title: "Rate", min: 0, max: 1, format: "percent" },
+      },
+    }),
+    {
+      series: { rate: { type: "line" } },
+      axes: { left: { title: "Rate", min: 0, max: 1, format: "percent" } },
+    }
+  );
+});
+
+test("a column called __proto__ keeps its series settings and format", () => {
+  const rows = {
+    columns: [
+      { name: "week", type: "string" },
+      { name: "revenue", type: "float" },
+      { name: "__proto__", type: "float" },
+    ],
+    rows: [["w1", 50000, 0.25]],
+  };
+  const series = JSON.parse('{"__proto__": {"type": "line", "axis": "right", "label": "Rate"}}');
+  const format = JSON.parse('{"revenue": "currency", "__proto__": "percent"}');
+  const spec = { type: "bar", x: "week", y: ["revenue", "__proto__"], format, series };
+  const cleaned = cleanCombo(spec);
+  assert.deepEqual(JSON.parse(JSON.stringify(cleaned.series)), JSON.parse('{"__proto__": {"type": "line", "axis": "right", "label": "Rate"}}'));
+  const option = translate(spec, rows);
+  assert.deepEqual(option.series.map((s) => [s.type, s.yAxisIndex, s.name]), [
+    ["bar", 0, "revenue"],
+    ["line", 1, "Rate"],
+  ]);
+  assert.equal(option.series[1].tooltip.valueFormatter(0.25), "25%");
 });

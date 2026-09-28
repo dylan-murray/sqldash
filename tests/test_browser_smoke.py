@@ -7550,3 +7550,38 @@ def test_dropping_the_last_left_series_in_the_builder_saves_a_valid_chart(page, 
         assert "right" not in chart.axes, (root / "d.yaml").read_text()
     finally:
         _stop_server(server, thread, page)
+
+
+def test_the_builder_keeps_a_proto_named_series_through_an_edit(page, tmp_path_factory):
+    root = tmp_path_factory.mktemp("comboproto")
+    (root / "d.yaml").write_text(
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        "tiles:\n"
+        "  - title: T\n"
+        "    chart:\n"
+        "      type: bar\n"
+        "      x: w\n"
+        "      y: [revenue, __proto__]\n"
+        "      format: {revenue: currency, __proto__: percent}\n"
+        "      series: {__proto__: {type: line, axis: right, label: Rate}}\n"
+        "    sql: \"SELECT w, revenue, r AS __proto__ FROM (VALUES ('a', 50000, 0.25),"
+        " ('b', 60000, 0.3)) t(w, revenue, r)\"\n"
+    )
+    app = create_app(root, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    try:
+        page.goto(f"http://127.0.0.1:{port}/d/d/query?tile=t", wait_until="load")
+        page.click("#run-btn")
+        page.wait_for_selector("#qb-preview canvas")
+        assert page.locator('select[aria-label="Format for __proto__"]').input_value() == "percent"
+        page.locator('input[aria-label="Legend name for revenue"]').fill("Revenue")
+        page.click("#qb-add")
+        page.wait_for_url("**/d/d?edit=1")
+        chart = DashboardStore(root).load("d")[0].tiles[0].chart
+        text = (root / "d.yaml").read_text()
+        assert chart.series["__proto__"].axis == "right", text
+        assert chart.series["__proto__"].label == "Rate", text
+        assert chart.series["revenue"].label == "Revenue", text
+        assert chart.format == {"revenue": "currency", "__proto__": "percent"}, text
+    finally:
+        _stop_server(server, thread, page)

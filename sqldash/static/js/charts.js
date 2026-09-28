@@ -478,9 +478,16 @@ function pivot(result, xName, yName, groupName) {
   return groups;
 }
 
+/* Column names key these maps and a column can be called `__proto__`, so a
+   read takes only the map's own entry and a write goes into a map with no
+   prototype, where that name is an ordinary key. */
+export function own(map, key) {
+  return map != null && Object.hasOwn(map, key) ? map[key] : undefined;
+}
+
 export function seriesFormat(spec, name) {
   if (typeof spec.format === "string") return spec.format;
-  return (spec.format || {})[name] || "number";
+  return own(spec.format, name) || "number";
 }
 
 export function baseOption(spec, isTemporal, yFormat, compact) {
@@ -1038,7 +1045,7 @@ export function cleanCombo(spec) {
   const ys = new Set(spec.y ?? []);
   const blocked = Boolean(spec.group_by) || spec.orientation === "horizontal";
   if (!["line", "bar", "area"].includes(spec.type) || blocked) return out;
-  const series = {};
+  const series = Object.create(null);
   for (const [column, entry] of Object.entries(spec.series ?? {})) {
     if (!entry || (ys.size && !ys.has(column))) continue;
     const next = {};
@@ -1047,18 +1054,19 @@ export function cleanCombo(spec) {
     if (entry.label) next.label = entry.label;
     if (Object.keys(next).length) series[column] = next;
   }
-  if (ys.size && [...ys].every((column) => series[column]?.axis === "right")) {
+  const promoted = ys.size > 0 && [...ys].every((column) => series[column]?.axis === "right");
+  if (promoted) {
     for (const column of ys) {
       delete series[column].axis;
       if (!Object.keys(series[column]).length) delete series[column];
     }
   }
-  if (Object.keys(series).length) out.series = series;
+  if (Object.keys(series).length) out.series = Object.fromEntries(Object.entries(series));
   const onRight = Object.values(series).some((entry) => entry.axis === "right");
   const axes = {};
   for (const side of ["left", "right"]) {
     if (side === "right" && !onRight) continue;
-    const entry = spec.axes?.[side];
+    const entry = spec.axes?.[promoted ? "right" : side];
     if (!entry) continue;
     const next = {};
     if (entry.title) next.title = entry.title;
@@ -1083,9 +1091,9 @@ function comboLayout(spec, series, horizontal) {
   const axesSet = Object.keys(spec.axes ?? {}).length > 0;
   if ((!Object.keys(overrides).length && !axesSet) || spec.group_by || horizontal) return null;
   if (!["line", "bar", "area"].includes(spec.type)) return null;
-  const types = series.map((s) => overrides[s.column]?.type || spec.type);
-  const axes = series.map((s) => (overrides[s.column]?.axis === "right" ? 1 : 0));
-  const names = series.map((s) => overrides[s.column]?.label || s.name);
+  const types = series.map((s) => own(overrides, s.column)?.type || spec.type);
+  const axes = series.map((s) => (own(overrides, s.column)?.axis === "right" ? 1 : 0));
+  const names = series.map((s) => own(overrides, s.column)?.label || s.name);
   const stackArea = spec.stacked || spec.type === "area";
   const areaStack = types.map((type, i) => {
     if (type !== "area" || !stackArea) return undefined;

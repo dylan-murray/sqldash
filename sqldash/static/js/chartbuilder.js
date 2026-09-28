@@ -4,6 +4,7 @@ import {
   inferSpec,
   markEmptyChart,
   markTruncated,
+  own,
   pruneSpecForType,
   referenceKind,
   renderBigNumber,
@@ -533,16 +534,14 @@ export class ChartBuilder {
   columnFormat(column) {
     const format = this._spec.format;
     if (typeof format === "string") return format;
-    return format?.[column] ?? "";
+    return own(format, column) ?? "";
   }
 
   setColumnFormat(column, value) {
     let format = this._spec.format;
-    if (typeof format === "string") {
-      format = Object.fromEntries((this._spec.y ?? []).map((name) => [name, format]));
-    } else {
-      format = { ...(format ?? {}) };
-    }
+    const shared = typeof format === "string" ? format : null;
+    format = Object.assign(Object.create(null), shared ? {} : format);
+    if (shared) for (const name of this._spec.y ?? []) format[name] = shared;
     if (value) format[column] = value;
     else delete format[column];
     this._spec.format = format;
@@ -577,9 +576,10 @@ export class ChartBuilder {
       el.addEventListener("input", () => onInput(el.value));
       return el;
     };
-    const entry = (column) => spec.series?.[column] ?? {};
+    const entry = (column) => own(spec.series, column) ?? {};
     const patch = (column, change, opts) => {
-      spec.series = { ...(spec.series ?? {}), [column]: { ...entry(column), ...change } };
+      spec.series = Object.assign(Object.create(null), spec.series);
+      spec.series[column] = { ...entry(column), ...change };
       this.seriesChanged(opts);
     };
     spec.y.forEach((column, index) => {
