@@ -209,10 +209,32 @@ test("a null under a filter that is not narrowing anything does not unpick the r
   assert.equal(rowIsPicked(plan, [null, "web", 1], result.columns, active), false);
 });
 
-test("a boolean click sets the option its filter bar renders", () => {
-  const flags = crossFilterPlan({ cross_filter: { active: "active" } }, [
-    { name: "active", type: "select", options: [true, false] },
+test("a boolean select with a default resets to it and reads as off there", () => {
+  const def = { name: "active", type: "select", options: [true, false], resolved_default: true };
+  const flags = crossFilterPlan({ cross_filter: { active: "active" } }, [def]);
+  const offs = { active: offValue(def, ["true", "false"]) };
+  assert.equal(offs.active, "true");
+  assert.equal(activeValues(flags, { active: "true" }, offs), null);
+  const { values } = picked(flags, [false], [{ name: "active", type: "boolean" }]);
+  assert.deepEqual(values, { active: "false" });
+  const on = toggled(flags, values, { active: "true" }, offs);
+  assert.deepEqual(on, { active: "false" });
+  assert.deepEqual(toggled(flags, values, on, offs), { active: "true" });
+});
+
+test("a numeric select and a number filter match a cell however it is spelled", () => {
+  const rate = crossFilterPlan({ cross_filter: { rate: "rate" } }, [
+    { name: "rate", type: "select", options: [1, 2] },
   ]);
-  const { values } = picked(flags, [true], [{ name: "active", type: "boolean" }]);
-  assert.deepEqual(values, { active: "True" });
+  const cols = [{ name: "rate", type: "float" }];
+  assert.deepEqual(picked(rate, [1], cols).values, { rate: "1" });
+  assert.deepEqual(picked(rate, ["1.0"], [{ name: "rate", type: "string" }]).values, { rate: "1" });
+  const n = crossFilterPlan({ cross_filter: { n: "n" } }, [
+    { name: "n", type: "number", resolved_default: null },
+  ]);
+  const ncols = [{ name: "n", type: "integer" }];
+  const active = activeValues(n, { n: "1.0" }, { n: "" });
+  assert.equal(rowIsPicked(n, [1], ncols, active), true);
+  assert.equal(rowIsPicked(n, [2], ncols, active), false);
+  assert.deepEqual(toggled(n, { n: "1" }, { n: "1.0" }, { n: "" }), { n: "" });
 });

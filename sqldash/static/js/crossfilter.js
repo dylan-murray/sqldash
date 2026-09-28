@@ -1,5 +1,5 @@
 import { escapeHtml } from "./charts.js";
-import { clickValue, clickedRow, optionText } from "./drill.js";
+import { clickValue, clickedRow, matchOption } from "./drill.js";
 
 const FUNNEL =
   '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" ' +
@@ -26,8 +26,9 @@ export function offValue(def, options = []) {
   return fallback === null || fallback === undefined ? "" : String(fallback);
 }
 
-function renderedOptions(def) {
-  return def.options?.map((o) => (typeof o === "boolean" ? (o ? "True" : "False") : String(o)));
+function sameValue(def, a, b) {
+  if (def.type !== "number" || a === "" || b === "") return a === b;
+  return a !== undefined && b !== undefined && Number(a) === Number(b);
 }
 
 function entryValue({ column, def }, row, columns) {
@@ -35,7 +36,8 @@ function entryValue({ column, def }, row, columns) {
   if (at < 0) return { error: `column '${column}' is not in this tile's result` };
   const { text, error } = clickValue(row?.[at], def.type, column);
   if (error) return { error };
-  return { text: optionText(row[at], text, renderedOptions(def)) };
+  if (def.type !== "select" || !def.options) return { text };
+  return { text: matchOption(def.options.map(String), text) ?? text };
 }
 
 export function picked(plan, row, columns) {
@@ -54,14 +56,14 @@ export function activeValues(plan, current, offs) {
   for (const { name, def } of plan.entries) {
     const value = current[name];
     if (value === undefined || value === "") continue;
-    if (value !== offs[name]) on = true;
+    if (!sameValue(def, value, offs[name])) on = true;
     if (!(def.type === "select" && value === "all")) values[name] = value;
   }
   return on ? values : null;
 }
 
 export function toggled(plan, values, current, offs) {
-  const same = plan.entries.every(({ name }) => current[name] === values[name]);
+  const same = plan.entries.every(({ name, def }) => sameValue(def, current[name], values[name]));
   const next = {};
   for (const { name } of plan.entries) next[name] = same ? offs[name] : values[name];
   return next;
@@ -71,7 +73,7 @@ export function rowIsPicked(plan, row, columns, active) {
   return plan.entries.every((entry) => {
     if (!(entry.name in active)) return true;
     const { text, error } = entryValue(entry, row, columns);
-    return !error && text === active[entry.name];
+    return !error && sameValue(entry.def, text, active[entry.name]);
   });
 }
 

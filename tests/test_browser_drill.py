@@ -374,6 +374,21 @@ tiles:
     cross_filter: {region: region}
     sql: "SELECT 'eu' AS region, CAST({{ s }} AS INTEGER) AS n"
 """,
+    "bools": """title: Bools
+source: {type: duckdb, attach_files: true}
+filters:
+  - {name: active, type: select, options: [true, false], default: true}
+  - {name: rate, type: select, options: [1.0, 2.0]}
+tiles:
+  - title: Flags
+    chart: table
+    cross_filter: {active: active}
+    sql: "SELECT FALSE AS active, 1 AS n"
+  - title: Rates
+    chart: table
+    cross_filter: {rate: rate}
+    sql: "SELECT 1.0::DOUBLE AS rate, 1 AS n"
+""",
     "dest_a": "title: Dest A\nsource: {type: duckdb, attach_files: true}\n"
     "filters:\n  - {name: k, type: text}\ntiles:\n  - {title: A, sql: 'SELECT 1 AS n'}\n",
     "dest_b": "title: Dest B\nsource: {type: duckdb, attach_files: true}\n"
@@ -794,3 +809,30 @@ def test_a_picked_category_keeps_its_marker_on_a_dense_line(page, edges):
         mount,
     )
     assert drawn
+
+
+def test_a_boolean_default_is_off_on_load_and_comes_back_on_clear(page, edges):
+    page.goto(f"{edges}/d/bools")
+    _wait_tiles(page)
+    flags = _xf_tile(page, "flags")
+    assert flags.locator("button.tile-xf").count() == 0
+    flags.locator("button.cell-filter").click()
+    page.wait_for_function("() => location.search.includes('f_active=false')")
+    flags.locator("button.tile-xf").click()
+    page.wait_for_function("() => location.search.includes('f_active=true')")
+    assert page.eval_on_selector('select[data-filter="active"]', "e => e.value") == "true"
+    assert flags.locator("button.tile-xf").count() == 0
+    flags.locator("button.cell-filter").click()
+    page.wait_for_function("() => location.search.includes('f_active=false')")
+    flags.locator("button.cell-filter").click()
+    page.wait_for_function("() => location.search.includes('f_active=true')")
+    assert page.locator(".toast-error").count() == 0
+
+
+def test_a_numeric_select_takes_the_value_a_float_cell_was_clicked_with(page, edges):
+    page.goto(f"{edges}/d/bools")
+    _wait_tiles(page)
+    _xf_tile(page, "rates").locator("button.cell-filter").click()
+    page.wait_for_function("() => location.search.includes('f_rate=1')")
+    assert page.eval_on_selector('select[data-filter="rate"]', "e => e.value") == "1"
+    assert page.locator(".toast-error").count() == 0
