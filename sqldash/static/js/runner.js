@@ -499,7 +499,12 @@ export function markTileClicks() {
 }
 
 function crossPlan(tile) {
-  return crossFilterPlan(tile, dashboard.filters);
+  const plan = crossFilterPlan(tile, dashboard.filters);
+  for (const entry of plan?.entries ?? []) {
+    const input = filterInput(entry.name);
+    if (input?.tagName === "SELECT") entry.options = selectOptions(input);
+  }
+  return plan;
 }
 
 function filterInput(name) {

@@ -1,10 +1,18 @@
 import { escapeHtml } from "./charts.js";
-import { clickValue, clickedRow, matchOption } from "./drill.js";
+import { clickValue, clickedRow, matchOption, valueKind } from "./drill.js";
 
 const FUNNEL =
   '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" ' +
   'stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">' +
   '<path d="M2.5 3.5h11L9.2 8.6v3.9l-2.4 1V8.6z"/></svg>';
+
+function staticOptions(def) {
+  if (def.type !== "select" || !def.options) return null;
+  return def.options.map((value) => ({
+    value: String(value),
+    kind: typeof value === "boolean" || typeof value === "number" ? typeof value : "string",
+  }));
+}
 
 export function crossFilterPlan(tile, filters) {
   const mapping = tile.cross_filter;
@@ -15,7 +23,7 @@ export function crossFilterPlan(tile, filters) {
     const def = filters.find((f) => f.name === name);
     if (!def) errors.push(`cross_filter '${name}' is not a filter on this dashboard`);
     else if (def.type === "daterange") errors.push(`cross_filter '${name}' is a date range`);
-    else entries.push({ name, column, def });
+    else entries.push({ name, column, def, options: staticOptions(def) });
   }
   return { entries, errors };
 }
@@ -31,13 +39,13 @@ function sameValue(def, a, b) {
   return a !== undefined && b !== undefined && Number(a) === Number(b);
 }
 
-function entryValue({ column, def }, row, columns) {
+function entryValue({ column, def, options }, row, columns) {
   const at = columns.findIndex((c) => c.name === column);
   if (at < 0) return { error: `column '${column}' is not in this tile's result` };
   const { text, error } = clickValue(row?.[at], def.type, column);
   if (error) return { error };
-  if (def.type !== "select" || !def.options) return { text };
-  return { text: matchOption(def.options.map(String), text) ?? text };
+  if (!options) return { text };
+  return { text: matchOption(options, text, valueKind(columns[at].type)) ?? text };
 }
 
 export function picked(plan, row, columns) {

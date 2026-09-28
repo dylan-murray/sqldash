@@ -228,7 +228,21 @@ test("a numeric select and a number filter match a cell however it is spelled", 
   ]);
   const cols = [{ name: "rate", type: "float" }];
   assert.deepEqual(picked(rate, [1], cols).values, { rate: "1" });
-  assert.deepEqual(picked(rate, ["1.0"], [{ name: "rate", type: "string" }]).values, { rate: "1" });
+  assert.deepEqual(picked(rate, ["1.0"], [{ name: "rate", type: "decimal" }]).values, { rate: "1" });
+  assert.deepEqual(picked(rate, ["1.0"], [{ name: "rate", type: "string" }]).values, { rate: "1.0" });
+  const fromQuery = crossFilterPlan({ cross_filter: { rate: "rate" } }, [
+    { name: "rate", type: "select", options_sql: "SELECT 1.0" },
+  ]);
+  fromQuery.entries[0].options = [
+    { value: "all", kind: "string" },
+    { value: "1.0", kind: "number" },
+  ];
+  assert.deepEqual(picked(fromQuery, [1], cols).values, { rate: "1.0" });
+  const codes = crossFilterPlan({ cross_filter: { code: "code" } }, [
+    { name: "code", type: "select", options: ["all", "100"] },
+  ]);
+  const textCol = [{ name: "code", type: "string" }];
+  assert.deepEqual(picked(codes, ["00100"], textCol).values, { code: "00100" });
   const n = crossFilterPlan({ cross_filter: { n: "n" } }, [
     { name: "n", type: "number", resolved_default: null },
   ]);
