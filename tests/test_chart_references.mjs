@@ -74,10 +74,11 @@ test("value lines, bands and x markers land on the right axes", () => {
   assert.equal(lines[0].yAxis, 120000);
   assert.equal(lines[0].label.formatter, "Stretch goal  $120,000");
   assert.equal(lines[0].lineStyle.type, "dashed");
-  assert.equal(lines.find((l) => l.xAxis === "2026-08-10").label.formatter, "Launch");
+  const day = (y, m, d) => new Date(y, m - 1, d).toISOString();
+  assert.equal(lines.find((l) => l.xAxis === day(2026, 8, 10)).label.formatter, "Launch");
   const bands = carrier(option, "__reference_bands").markArea.data;
   assert.deepEqual([bands[0][0].yAxis, bands[0][1].yAxis], [40000, 60000]);
-  assert.deepEqual([bands[1][0].xAxis, bands[1][1].xAxis], ["2026-08-03", "2026-08-17"]);
+  assert.deepEqual([bands[1][0].xAxis, bands[1][1].xAxis], [day(2026, 8, 3), day(2026, 8, 17)]);
   assert.deepEqual(option.yAxis.max({ min: 50000, max: 57000 }), 120000);
 });
 
@@ -286,4 +287,46 @@ test("a marker on a numeric category draws on that category", () => {
     assert.deepEqual(lines.map((l) => l.xAxis), [1]);
     assert.ok(renderedSvg(option).includes(">Marker<"), rows);
   }
+});
+
+test("a timestamp marker with a fractional offset lands where the axis extent put it", () => {
+  const days = {
+    columns: [
+      { name: "day", type: "date" },
+      { name: "n", type: "float" },
+    ],
+    rows: [
+      ["2026-09-01", 5],
+      ["2026-09-02", 10],
+    ],
+  };
+  const option = translate(
+    { type: "line", x: "day", y: ["n"], references: [{ x: "2026-09-03T00:00:00+05:30", label: "Goal" }] },
+    days
+  );
+  const at = carrier(option, "__reference_lines").markLine.data[0].xAxis;
+  assert.equal(at, "2026-09-02T18:30:00.000Z");
+  assert.equal(option.xAxis.max({ min: 0, max: 0 }), Date.parse(at));
+  assert.ok(renderedSvg(option).includes(">Goal<"));
+});
+
+test("a day matches a timestamp category only on a date column and only before a time", () => {
+  const labelled = (type, names) => ({
+    columns: [
+      { name: "k", type },
+      { name: "n", type: "float" },
+    ],
+    rows: names.map((name, i) => [name, i + 1]),
+  });
+  const marker = (result) =>
+    carrier(translate({ type: "bar", x: "k", y: ["n"], references: [{ x: "2026-09-01" }, { y: 1 }] }, result), "__reference_lines")
+      .markLine.data.filter((l) => l.xAxis !== undefined)
+      .map((l) => l.xAxis);
+  assert.deepEqual(marker(labelled("string", ["2026-09-01 Trial", "2026-09-02 Paid"])), []);
+  assert.deepEqual(marker(labelled("string", ["2026-09-01T00:00:00", "2026-09-02T00:00:00"])), []);
+  assert.deepEqual(marker(labelled("timestamp", ["2026-09-01 Trial", "2026-09-02 Paid"])), []);
+  assert.deepEqual(marker(labelled("timestamp", ["2026-09-01T00:00:00", "2026-09-02T00:00:00"])), [
+    "2026-09-01T00:00:00",
+  ]);
+  assert.deepEqual(marker(labelled("timestamp", ["2026-09-01 08:30:00+05:30"])), ["2026-09-01 08:30:00+05:30"]);
 });

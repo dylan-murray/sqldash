@@ -728,11 +728,20 @@ function categoryPositions(series) {
   return positions;
 }
 
-function matchCategory(value, categories) {
+/* The time of day a timestamp category carries after its date. */
+const TIME_OF_DAY = /^[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}(:?\d{2})?)?$/;
+
+/* A category marker matches its category exactly. The one exception is a day
+   on a date or timestamp column drawn as categories (a bar chart), where
+   `2026-09-01` names the category `2026-09-01T00:00:00`: only there, and
+   only when what follows the date is a time. */
+function matchCategory(value, categories, temporal) {
   const text = String(value);
   if (categories.has(text)) return categories.get(text);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
-  for (const [c, at] of categories) if (c.startsWith(`${text}T`) || c.startsWith(`${text} `)) return at;
+  if (!temporal || !/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+  for (const [c, at] of categories) {
+    if (c.startsWith(text) && TIME_OF_DAY.test(c.slice(text.length))) return at;
+  }
   return null;
 }
 
@@ -810,19 +819,25 @@ function addReferences(option, spec, result, { horizontal, isTemporal, yFormat, 
   const valueKey = horizontal ? "xAxis" : "yAxis";
   const categoryKey = horizontal ? "yAxis" : "xAxis";
   const categories = categoryPositions(option.series);
+  const temporalCategories = TEMPORAL_TYPES.has(result.columns[colIndex(result, spec.x)]?.type);
   const lines = [];
   const bands = [];
   const bandLabels = [];
   const valueLines = [];
   const values = [];
   const times = [];
+  /* On a time axis a marker goes where the axis extent put it: the one
+     instant timeValue read, handed to ECharts as a UTC ISO string rather
+     than the authored text, which ECharts would parse again its own way
+     (it reads a +05:30 offset as +05:00). */
   const place = (value) => {
     if (isTemporal) {
       const t = timeValue(value);
-      if (t !== null) times.push(t);
-      return t === null ? null : value;
+      if (t === null) return null;
+      times.push(t);
+      return new Date(t).toISOString();
     }
-    return matchCategory(value, categories);
+    return matchCategory(value, categories, temporalCategories);
   };
   for (const ref of refs) {
     const color = referenceColor(ref.color);

@@ -95,10 +95,10 @@ as another observed series.
 
 A value past the data widens the axis to fit it, so a goal the series has not reached
 yet is still on the chart. A category marker that the result does not contain is left
-off rather than drawn in the wrong place. It matches a category exactly, and a date
-matches its day on a timestamp axis. A number marks the category with that value,
-not the position. On a narrow tile a line keeps its label and drops the number
-beside it. `sqldash lint` rejects references on `pie`, `big_number` and `table` tiles,
+off rather than drawn in the wrong place. It matches a category exactly, except that
+a date finds its day on a timestamp column a bar chart draws as categories. A number
+marks the category with that value, not the position. On a narrow tile a line keeps
+its label and drops the number beside it. `sqldash lint` rejects references on `pie`, `big_number` and `table` tiles,
 a metric that does not exist, a trailing-window metric on a dashboard with a date range
 (a window is one value as of a day, not a value over a range), a band that is not a
 pair, and an entry with no position or more than one. The chart builder has the same
