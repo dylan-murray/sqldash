@@ -76,7 +76,8 @@ chart draws `y` references as vertical lines. A `metric` reference runs that met
 with no dimensions under the dashboard's current filters, the way a big number would,
 so the line moves when the date range or a select filter changes. It takes the bare
 metric name, as a tile's `metric:` does. A metric the dashboard also shows as a big
-number is queried once for both.
+number is queried once for both. If the warehouse refuses a metric reference, the chart
+draws the rest and a note at the bottom of the tile names the reference and the error.
 
 Optional keys on every entry:
 
@@ -95,12 +96,14 @@ as another observed series.
 A value past the data widens the axis to fit it, so a goal the series has not reached
 yet is still on the chart. A category marker that the result does not contain is left
 off rather than drawn in the wrong place. It matches a category exactly, and a date
-matches its day on a timestamp axis. On a narrow tile a line keeps its label and
-drops the number beside it. `sqldash lint` rejects references on `pie`, `big_number`
-and `table` tiles, a metric that does not exist, a band that is not a pair, and an
-entry with no position or more than one. The chart builder has the same controls
-under References, and switching to a chart type without axes sets the references
-aside until you switch back.
+matches its day on a timestamp axis. A number marks the category with that value,
+not the position. On a narrow tile a line keeps its label and drops the number
+beside it. `sqldash lint` rejects references on `pie`, `big_number` and `table` tiles,
+a metric that does not exist, a trailing-window metric on a dashboard with a date range
+(a window is one value as of a day, not a value over a range), a band that is not a
+pair, and an entry with no position or more than one. The chart builder has the same
+controls under References, and switching to a chart type without axes sets the
+references aside until you switch back.
 
 ## Relative dates
 

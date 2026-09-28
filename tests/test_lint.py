@@ -2085,3 +2085,25 @@ def test_a_metric_reference_counts_as_using_the_date_filter(tmp_path):
     )
     findings = [f.message for f in lint(tmp_path)]
     assert not any("filter 'dates' is not used" in m for m in findings), findings
+
+
+@pytest.mark.parametrize("dated", [True, False])
+def test_a_trailing_window_reference_is_rejected_under_a_date_range(tmp_path, dated):
+    create_demo(tmp_path)
+    metrics = tmp_path / ".sqldash" / "metrics.yaml"
+    metrics.write_text(
+        metrics.read_text() + "\n  trailing_revenue:\n    relation: orders\n    expr: SUM(amount)\n"
+        "    window: 28 days\n    time_dimension: {name: order_date, grain: day}\n"
+    )
+    filters = "filters:\n  - {name: dates, type: daterange, default: last_60_days}\n"
+    (tmp_path / ".sqldash" / "refs.yaml").write_text(
+        "title: R\nsource: {type: duckdb, attach_files: true}\n"
+        + (filters if dated else "")
+        + "tiles:\n"
+        "  - title: T\n"
+        "    sql: SELECT category, SUM(amount) AS revenue FROM orders GROUP BY 1\n"
+        "    chart: {type: bar, references: [{metric: trailing_revenue}]}\n"
+    )
+    errors = [f.message for f in lint(tmp_path) if f.level == "error"]
+    rejected = [m for m in errors if "a trailing 28 days window" in m]
+    assert bool(rejected) is dated, errors

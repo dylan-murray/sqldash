@@ -7350,3 +7350,43 @@ def test_chart_builder_adds_a_reference_and_saves_it(page, tmp_path_factory):
         ), text
     finally:
         _stop_server(server, thread, page)
+
+
+def test_a_reference_the_warehouse_refuses_is_named_on_the_tile(page, tmp_path_factory):
+    root = tmp_path_factory.mktemp("refusedref")
+    create_demo(root)
+    metrics = root / ".sqldash" / "metrics.yaml"
+    metrics.write_text(
+        metrics.read_text() + "\n  trailing_revenue:\n    relation: orders\n    expr: SUM(amount)\n"
+        "    window: 28 days\n    time_dimension: {name: order_date, grain: day}\n"
+    )
+    (root / ".sqldash" / "r.yaml").write_text(
+        "title: R\n"
+        "source: {type: duckdb, attach_files: true}\n"
+        "filters:\n"
+        "  - {name: dates, type: daterange, default: last_60_days}\n"
+        "tiles:\n"
+        "  - title: Bars\n"
+        "    chart: {type: bar, references: [{metric: trailing_revenue}, {y: 5, label: Five}]}\n"
+        "    sql: SELECT category, SUM(amount) AS revenue FROM orders GROUP BY 1\n"
+    )
+    app = create_app(root, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    try:
+        page.goto(f"http://127.0.0.1:{port}/d/r", wait_until="load")
+        _wait_tiles(page)
+        note = page.locator('.tile[data-tile-id="bars"] .reference-note')
+        note.wait_for()
+        assert "reference 'trailing_revenue' is not drawn" in note.inner_text()
+        assert "omit start" in note.inner_text()
+        lines = page.evaluate(
+            """() => {
+              const m = document.querySelector('.tile[data-tile-id="bars"] .chart-mount');
+              const refs = echarts.getInstanceByDom(m).getOption().series
+                .find((s) => s.name === '__reference_lines');
+              return refs.markLine.data.map((d) => d.label.formatter);
+            }"""
+        )
+        assert lines == ["Five  5"], lines
+    finally:
+        _stop_server(server, thread, page)

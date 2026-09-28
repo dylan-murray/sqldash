@@ -167,7 +167,8 @@ export function defaultChartSpec(tile) {
 
 export function renderTile(el, tile, result, previous = null) {
   const body = el.querySelector(".tile-body");
-  let spec = withReferenceValues(tile.chart ?? defaultChartSpec(tile), tileReferenceValues.get(tile.id));
+  const referenceRun = tileReferenceValues.get(tile.id);
+  let spec = withReferenceValues(tile.chart ?? defaultChartSpec(tile), referenceRun?.values);
   tileResults.set(tile.id, result);
   setStatus(body, null);
   const csvBtn = el.querySelector('[data-action="csv"]');
@@ -227,6 +228,23 @@ export function renderTile(el, tile, result, previous = null) {
   // a line that stops early reads as the data ending rather than the row cap.
   // Same note renderTable uses, so the two agree about the same result.
   markTruncated(body, result);
+  noteReferenceErrors(body, referenceRun?.errors);
+}
+
+/* A reference the warehouse refused is left off the chart, so the tile says
+   which one and why, in the same strip a truncation note uses. */
+function noteReferenceErrors(body, errors) {
+  if (!errors?.length) return;
+  let note = body.querySelector(":scope > .truncated-note");
+  if (!note) {
+    note = document.createElement("div");
+    note.className = "truncated-note";
+    body.appendChild(note);
+  }
+  body.classList.add("has-truncation");
+  note.classList.add("reference-note");
+  note.textContent = [note.textContent, ...errors].filter(Boolean).join(" · ");
+  note.title = note.textContent;
 }
 
 
@@ -248,7 +266,8 @@ function withReferenceValues(spec, values) {
    values as the tile, so a target moves with the dashboard's date range and
    region the way a big number would. It shares `pending` with the tiles, so a
    reference to a metric a big number already shows costs no second query. A
-   failed reference drops out of the chart instead of failing the tile. */
+   failed reference drops out of the chart instead of failing the tile, and
+   its error comes back to be shown on the tile. */
 function metricReferenceValues(tile, values, pending) {
   const names = [...new Set((tile.chart?.references ?? []).filter((r) => r?.metric).map((r) => r.metric))];
   if (!names.length) return Promise.resolve(null);
@@ -268,13 +287,13 @@ function metricReferenceValues(tile, values, pending) {
           const value = col < 0 ? null : chartNumber(result.rows[0]?.[col] ?? null);
           return [name, typeof value === "number" ? value : null];
         },
-        (err) => {
-          console.warn(`reference metric '${name}' did not run: ${err.message}`);
-          return [name, null];
-        }
+        (err) => [name, null, `reference '${name}' is not drawn: ${err.message}`]
       );
     })
-  ).then(Object.fromEntries);
+  ).then((runs) => ({
+    values: Object.fromEntries(runs.map(([name, value]) => [name, value])),
+    errors: runs.map((run) => run[2]).filter(Boolean),
+  }));
 }
 
 function daterangeBinds() {

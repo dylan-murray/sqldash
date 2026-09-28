@@ -751,7 +751,9 @@ def _lint_query_writes(dashboard, file: str) -> list[Finding]:
     return findings
 
 
-def _reference_findings(tile, file: str, available: dict) -> list[Finding]:
+def _reference_findings(
+    tile, file: str, available: dict, dashboard, project_metrics: dict
+) -> list[Finding]:
     """References draw over an x/y plot, and a metric reference needs a metric
     the dashboard can run."""
     if tile.chart is None or not tile.chart.references:
@@ -766,8 +768,11 @@ def _reference_findings(tile, file: str, available: dict) -> list[Finding]:
             )
         ]
     findings: list[Finding] = []
+    dated = any(f.type == "daterange" for f in dashboard.filters)
     for n, ref in enumerate(tile.chart.references, start=1):
-        if ref.metric is not None and ref.metric not in available:
+        if ref.metric is None:
+            continue
+        if ref.metric not in available:
             options = ", ".join(sorted(available)) or "(none defined)"
             findings.append(
                 Finding(
@@ -775,6 +780,20 @@ def _reference_findings(tile, file: str, available: dict) -> list[Finding]:
                     "error",
                     f"tile '{tile.id}': reference {n} names unknown metric '{ref.metric}'. "
                     f"Available: {options}",
+                )
+            )
+            continue
+        definition = dashboard.metrics.get(ref.metric) or project_metrics[ref.metric].definition
+        if dated and definition.window:
+            findings.append(
+                Finding(
+                    file,
+                    "error",
+                    f"tile '{tile.id}': reference {n} names '{ref.metric}', a trailing "
+                    f"{definition.window} window, which is one value as of a day and not "
+                    "a value over the dashboard's date range, so it cannot run under that "
+                    "filter. Reference a metric without a window, or chart this one on its "
+                    "own metric tile with a grain",
                 )
             )
     return findings
@@ -820,7 +839,7 @@ def _lint_tiles(
                     f"not {tile.chart.type}",
                 )
             )
-        findings.extend(_reference_findings(tile, file, available))
+        findings.extend(_reference_findings(tile, file, available, dashboard, project_metrics))
         for ref in tile.chart.references if tile.chart else []:
             if ref.metric in available:
                 _note_metric_use(usage, dashboard, project_metrics, ref.metric)
