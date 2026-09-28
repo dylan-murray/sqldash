@@ -576,12 +576,19 @@ function xyOption(spec, result, forcedColor, height = 0, width = 0) {
         : { type: "line", lineStyle: { color: cssVar("--baseline"), type: "solid", width: 1 } };
   }
   if (spec.color_by === "value" && spec.type === "bar" && series.length === 1) {
-    const values = series[0].data.map((d) => Number(d[1])).filter((v) => !Number.isNaN(v));
-    if (values.length) {
+    let min = Infinity;
+    let max = -Infinity;
+    for (const d of series[0].data) {
+      const v = Number(d[1]);
+      if (Number.isNaN(v)) continue;
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    if (min <= max) {
       option.visualMap = {
         show: false,
-        min: Math.min(...values),
-        max: Math.max(...values),
+        min,
+        max,
         dimension: 1,
         seriesIndex: 0,
         inRange: { color: [withAlpha(colors[0], 0.3), colors[0]] },
@@ -705,11 +712,27 @@ function reachTimeAxis(axis, times) {
   axis.max = (e) => (Number.isFinite(e.max) && hi <= e.max ? null : hi);
 }
 
+/* A category axis numbers its categories in the order the series first
+   show them, and a marker at a number is read as that position, not as the
+   category named by it. So a marker resolves to the category's own text, or
+   to its position when the axis holds numbers. */
+function categoryPositions(series) {
+  const positions = new Map();
+  for (const s of series) {
+    for (const d of s.data) {
+      const x = Array.isArray(d) ? d[0] : d;
+      const text = String(x);
+      if (!positions.has(text)) positions.set(text, typeof x === "string" ? x : positions.size);
+    }
+  }
+  return positions;
+}
+
 function matchCategory(value, categories) {
   const text = String(value);
-  if (categories.has(text)) return text;
+  if (categories.has(text)) return categories.get(text);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
-  for (const c of categories) if (c.startsWith(`${text}T`) || c.startsWith(`${text} `)) return c;
+  for (const [c, at] of categories) if (c.startsWith(`${text}T`) || c.startsWith(`${text} `)) return at;
   return null;
 }
 
@@ -760,16 +783,22 @@ const BAND_LABEL_ROOM = 22;
 
 function liftCrowdedBandLabels(bandLabels, valueLines, series, references, height) {
   if (!bandLabels.length) return;
-  const plotted = series
-    .flatMap((s) => s.data.map((d) => finiteNumber(Array.isArray(d) ? d[1] : d)))
-    .filter((v) => v !== null);
-  const all = [0, ...plotted, ...references];
-  const span = Math.max(...all) - Math.min(...all);
+  let lo = 0;
+  let hi = 0;
+  const reach = (v) => {
+    if (v === null) return;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  };
+  for (const s of series) for (const d of s.data) reach(finiteNumber(Array.isArray(d) ? d[1] : d));
+  for (const v of references) reach(v);
+  const span = hi - lo;
   const plotHeight = Math.max(height - 60, 0);
-  for (const { line, lo, hi } of bandLabels) {
-    const crossed = valueLines.some((y) => y >= lo && y <= hi);
-    const thin = plotHeight > 0 && span > 0 && ((hi - lo) / span) * plotHeight < BAND_LABEL_ROOM;
-    if (crossed || thin) line.yAxis = lo;
+  for (const band of bandLabels) {
+    const crossed = valueLines.some((y) => y >= band.lo && y <= band.hi);
+    const tall = ((band.hi - band.lo) / span) * plotHeight;
+    const thin = plotHeight > 0 && span > 0 && tall < BAND_LABEL_ROOM;
+    if (crossed || thin) band.line.yAxis = band.lo;
   }
 }
 
@@ -780,8 +809,7 @@ function addReferences(option, spec, result, { horizontal, isTemporal, yFormat, 
   const surface = cssVar("--surface");
   const valueKey = horizontal ? "xAxis" : "yAxis";
   const categoryKey = horizontal ? "yAxis" : "xAxis";
-  const xi = colIndex(result, spec.x);
-  const categories = new Set(result.rows.map((row) => String(row[xi])));
+  const categories = categoryPositions(option.series);
   const lines = [];
   const bands = [];
   const bandLabels = [];
@@ -837,7 +865,7 @@ function addReferences(option, spec, result, { horizontal, isTemporal, yFormat, 
         console.warn(`reference x ${JSON.stringify(ref.x)} is not on this chart's x axis`);
         continue;
       }
-      const text = label ?? (isTemporal ? formatValue(ref.x, "date") : String(at));
+      const text = label ?? (isTemporal ? formatValue(ref.x, "date") : String(typeof at === "number" ? ref.x : at));
       lines.push({
         [categoryKey]: at,
         lineStyle,

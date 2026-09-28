@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import { test } from "node:test";
 
 import {
@@ -220,4 +221,69 @@ test("a band label moves below the band when a line runs through it or it is too
   assert.equal(edge([{ y: [-500, 500], label: "Noise" }]), -500);
   assert.equal(edge([{ y: [5000, 15000], label: "Healthy" }]), 15000);
   assert.equal(edge([{ y: [5000, 15000], label: "Healthy" }], 0), 15000);
+});
+
+test("a band on a large result finds the extent without spreading the data into a call", () => {
+  const names = Array.from({ length: 16 }, (_, i) => `s${i}`);
+  const big = {
+    columns: [{ name: "x", type: "string" }, ...names.map((name) => ({ name, type: "float" }))],
+    rows: Array.from({ length: 10000 }, (_, r) => [`r${r}`, ...names.map((_, i) => r + i)]),
+  };
+  const option = translate(
+    { type: "line", x: "x", y: names, references: [{ y: [5, 10], label: "Band" }] },
+    big,
+    undefined,
+    300
+  );
+  assert.ok(carrier(option, "__reference_bands"));
+});
+
+test("a color_by value bar on a large result sets its color range", () => {
+  const big = {
+    columns: [
+      { name: "x", type: "string" },
+      { name: "n", type: "float" },
+    ],
+    rows: Array.from({ length: 200000 }, (_, r) => [`r${r}`, r]),
+  };
+  const option = translate({ type: "bar", x: "x", y: ["n"], color_by: "value" }, big);
+  assert.deepEqual([option.visualMap.min, option.visualMap.max], [0, 199999]);
+});
+
+const echarts = createRequire(import.meta.url)("../sqldash/static/vendor/echarts.min.js");
+
+function renderedSvg(option) {
+  const fake = globalThis.document;
+  delete globalThis.document;
+  try {
+    const chart = echarts.init(null, null, { renderer: "svg", ssr: true, width: 400, height: 300 });
+    chart.setOption(option);
+    const svg = chart.renderToSVGString();
+    chart.dispose();
+    return svg;
+  } finally {
+    globalThis.document = fake;
+  }
+}
+
+test("a marker on a numeric category draws on that category", () => {
+  for (const rows of [
+    [[1, 5], [2, 10]],
+    [[1.5, 5], [2.5, 10]],
+  ]) {
+    const result = {
+      columns: [
+        { name: "k", type: "float" },
+        { name: "n", type: "float" },
+      ],
+      rows,
+    };
+    const option = translate(
+      { type: "bar", x: "k", y: ["n"], references: [{ x: rows[1][0], label: "Marker" }, { x: 7 }] },
+      result
+    );
+    const lines = carrier(option, "__reference_lines").markLine.data;
+    assert.deepEqual(lines.map((l) => l.xAxis), [1]);
+    assert.ok(renderedSvg(option).includes(">Marker<"), rows);
+  }
 });
