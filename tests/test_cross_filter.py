@@ -115,3 +115,23 @@ def test_a_tile_write_keeps_replaces_and_removes_its_cross_filter(tmp_path):
     assert write({**base, "cross_filter": None}) is None
     text = (tmp_path / "overview.yaml").read_text()
     assert "    cross_filter: {region: region}\n" in text
+
+
+def test_reordering_a_cross_filter_is_saved_since_the_first_entry_is_the_toggle(tmp_path):
+    (tmp_path / "overview.yaml").write_text(
+        HEAD + "  - {name: channel, type: text}\n" + "tiles:\n"
+        "  - title: By region\n"
+        "    chart: table\n"
+        "    sql: \"SELECT 'us' AS region, 'web' AS channel\"\n"
+        "    cross_filter: {region: region, channel: channel}\n"
+        "\n  # The next tile\n  - {title: Next, sql: 'SELECT 1 AS n'}\n"
+    )
+    store = DashboardStore(tmp_path)
+    tile = {"id": "by_region", "title": "By region", "chart": "table", "query": "by_region"}
+    for mapping in ({"channel": "channel", "region": "region"}, None):
+        store.upsert_tile(
+            "overview", {**tile, "cross_filter": mapping}, None, store.load("overview")[2]
+        )
+        saved = store.load("overview")[0].tiles[0].cross_filter
+        assert (list(saved) if saved else saved) == (list(mapping) if mapping else None)
+        assert "\n\n  # The next tile\n" in (tmp_path / "overview.yaml").read_text()

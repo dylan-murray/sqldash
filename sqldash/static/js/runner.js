@@ -650,7 +650,8 @@ function refreshCrossFilterTiles(affected) {
     if (!el) continue;
     markCrossFilterTile(el, tile);
     const result = tileResults.get(tile.id);
-    if (result && !affected.has(tile.id)) renderTile(el, tile, result, tilePrevResults.get(tile.id));
+    if (!result || affected.has(tile.id) || runErrors.has(tile.id)) continue;
+    renderTile(el, tile, result, tilePrevResults.get(tile.id));
   }
 }
 

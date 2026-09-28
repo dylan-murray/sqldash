@@ -935,12 +935,8 @@ def _edit_tile_in_place(
 
     if "cross_filter" in tile:
         wanted = tile["cross_filter"]
-        if current is None or current.cross_filter != wanted:
-            if wanted is None:
-                if "cross_filter" in existing:
-                    _delete_key(existing, "cross_filter")
-            else:
-                _put_key(existing, "cross_filter", _flow(wanted))
+        if current is None or _in_order(current.cross_filter) != _in_order(wanted):
+            _replace_key(existing, "cross_filter", None if wanted is None else _flow(wanted))
 
     wrote_position = False
     pos = tile.get("position")

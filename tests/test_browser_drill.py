@@ -358,6 +358,17 @@ tiles:
     cross_filter: {day: day}
     sql: "SELECT DATE '2026-01-01' + CAST(i AS INTEGER) AS day, i AS n FROM range(50) t(i)"
 """,
+    "fragile": """title: Fragile
+source: {type: duckdb, attach_files: true}
+filters:
+  - {name: region, type: select, options: [all, us, eu]}
+  - {name: s, type: text, default: "1"}
+tiles:
+  - title: Fragile
+    chart: table
+    cross_filter: {region: region}
+    sql: "SELECT 'eu' AS region, CAST({{ s }} AS INTEGER) AS n"
+""",
     "dest_a": "title: Dest A\nsource: {type: duckdb, attach_files: true}\n"
     "filters:\n  - {name: k, type: text}\ntiles:\n  - {title: A, sql: 'SELECT 1 AS n'}\n",
     "dest_b": "title: Dest B\nsource: {type: duckdb, attach_files: true}\n"
@@ -742,3 +753,17 @@ def test_another_point_on_a_long_selected_line_can_still_be_picked(page, edges):
     page.wait_for_timeout(200)
     page.mouse.click(point["x"], point["y"])
     page.wait_for_function("() => location.search.includes('f_day=2026-01-20')")
+
+
+def test_a_cross_filter_change_elsewhere_keeps_a_failed_tile_showing_its_error(page, edges):
+    page.goto(f"{edges}/d/fragile")
+    _wait_tiles(page)
+    tile = _xf_tile(page, "fragile")
+    assert tile.locator("td").nth(1).text_content() == "1"
+    page.fill('[data-filter="s"]', "x")
+    page.keyboard.press("Enter")
+    tile.locator(".tile-status .err").wait_for()
+    page.select_option('select[data-filter="region"]', "eu")
+    page.wait_for_function("() => location.search.includes('f_region=eu')")
+    page.wait_for_timeout(500)
+    assert tile.locator(".tile-status .err").count() == 1
