@@ -6,6 +6,7 @@ import {
   binLabel,
   binValues,
   edgeLabel,
+  tickLabels,
   histogramScope,
   MAX_BINS,
 } from "../sqldash/static/js/histogram.js";
@@ -181,14 +182,14 @@ test("large but representable edges are kept exactly instead of rounded together
 test("labels keep the authored bin_start offset", () => {
   const summary = binValues([0.001, 1.001, 2.001], { bin_width: 1, bin_start: 0.001 });
   assert.deepEqual(
-    summary.bins.map((b) => binLabel(b, "number", summary.digits)),
+    summary.bins.map((b) => binLabel(b, "number")),
     ["0.001 to under 1.001", "1.001 to 2.001"]
   );
 });
 
 test("tiny edges switch to scientific labels instead of all reading 0", () => {
   const summary = binValues([1e-22, 2e-22], {});
-  const labels = summary.bins.map((b) => binLabel(b, "number", summary.digits));
+  const labels = summary.bins.map((b) => binLabel(b, "number"));
   assert.equal(new Set(labels).size, labels.length, labels.join(" | "));
   assert.equal(labels[0], "1E-22 to under 1.25E-22");
 });
@@ -216,13 +217,10 @@ test("an authored bin_start is never snapped to zero", () => {
 test("decimals come from the actual edges, in count mode and on shifted axis ticks", () => {
   const counted = binValues([0.001, 1.001, 2.001], { bins: 2 });
   assert.deepEqual(
-    counted.bins.map((b) => binLabel(b, "number", counted.digits)),
+    counted.bins.map((b) => binLabel(b, "number")),
     ["0.001 to under 1.001", "1.001 to 2.001"]
   );
-  const shifted = binValues([0.001, 1.001, 2.001], { bin_width: 1, bin_start: 0.001 });
-  assert.equal(edgeLabel(1.001, "number", 1, shifted.digits), "1.001");
-  const uneven = binValues([22.5, 81.08, 100, 374, 200, 300], { bins: 12 });
-  assert.equal(uneven.digits, 2);
+  assert.deepEqual(tickLabels([0.001, 1.001, 2.001], "number"), ["0.001", "1.001", "2.001"]);
 });
 
 test("a bin_width too fine for 200 bins still falls back to auto before any range check", () => {
@@ -231,6 +229,42 @@ test("a bin_width too fine for 200 bins still falls back to auto before any rang
   assert.equal(summary.mode, "auto");
   assert.ok(summary.tooMany > MAX_BINS);
   assert.ok(summary.bins.length >= 1);
+});
+
+test("a derived edge is never moved across a data value", () => {
+  const d = 2 ** -13;
+  const summary = binValues([0, d / 2, d, 1e12 + d], { bin_width: 1e12, bin_start: 1e12 + d });
+  assert.deepEqual(
+    summary.bins.map((b) => b.count),
+    [2, 2]
+  );
+  assert.equal(summary.bins[1].lo, d);
+});
+
+test("every tooltip edge is the exact edge rows were counted against", () => {
+  const counted = binValues([0.1234567, 1.1234567, 2.1234567], { bins: 2 });
+  assert.deepEqual(
+    counted.bins.map((b) => binLabel(b, "number")),
+    ["0.1234567 to under 1.1234567", "1.1234567 to 2.1234567"]
+  );
+  const uneven = binValues([22.5, 81.08, 100, 374, 200, 300], { bins: 12 });
+  for (const bin of uneven.bins) {
+    const [lo, hi] = binLabel(bin, "number").replace("under ", "").split(" to ");
+    assert.equal(Number(lo.replaceAll(",", "")), bin.lo);
+    assert.equal(Number(hi.replaceAll(",", "")), bin.hi);
+  }
+});
+
+test("compact axis ticks that would read the same fall back to full numbers", () => {
+  assert.deepEqual(tickLabels([10000, 10000.5, 10001, 10001.5, 10002], "number"), [
+    "10,000",
+    "10,000.5",
+    "10,001",
+    "10,001.5",
+    "10,002",
+  ]);
+  assert.deepEqual(tickLabels([10000, 20000, 30000], "number"), ["10K", "20K", "30K"]);
+  assert.deepEqual(tickLabels([1e6, 1.0001e6], "currency"), ["$1,000,000", "$1,000,100"]);
 });
 
 test("interval labels say which edge is included", () => {

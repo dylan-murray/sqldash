@@ -140,6 +140,9 @@ tiles:
   - title: Shifted
     chart: {type: histogram, x: v, bin_width: 1, bin_start: 0.001}
     sql: SELECT * FROM (VALUES (0.001), (1.001), (2.001)) t(v)
+  - title: Close together
+    chart: {type: histogram, x: v, bins: 2}
+    sql: SELECT * FROM (VALUES (10000.0), (10001.0), (10002.0)) t(v)
 """
 
 
@@ -217,6 +220,9 @@ def test_histograms_render_real_duckdb_distributions(tmp_path):
     assert state["too_wide"]["bins"] == []
     assert state["too_wide"]["empty"] == UNBINNABLE
     assert {"0.001", "1.001", "2.001"} <= set(state["shifted"]["texts"]), state["shifted"]["texts"]
+    close = [t for t in state["close_together"]["texts"] if t.startswith("10")]
+    assert len(close) > 1, close
+    assert len(set(close)) == len(close), close
     assert narrow["texts"], narrow
     assert all(right <= narrow["width"] - 8 for _, right in narrow["texts"]), narrow
 
