@@ -74,8 +74,9 @@ chart:
 `y` is always the value axis and `x` the category or time axis, so a horizontal bar
 chart draws `y` references as vertical lines. A `metric` reference runs that metric
 with no dimensions under the dashboard's current filters, the way a big number would,
-so the line moves when the date range or a select filter changes. A metric the
-dashboard also shows as a big number is queried once for both.
+so the line moves when the date range or a select filter changes. It takes the bare
+metric name, as a tile's `metric:` does. A metric the dashboard also shows as a big
+number is queried once for both.
 
 Optional keys on every entry:
 
@@ -93,7 +94,8 @@ as another observed series.
 
 A value past the data widens the axis to fit it, so a goal the series has not reached
 yet is still on the chart. A category marker that the result does not contain is left
-off rather than drawn in the wrong place. On a narrow tile a line keeps its label and
+off rather than drawn in the wrong place. It matches a category exactly, and a date
+matches its day on a timestamp axis. On a narrow tile a line keeps its label and
 drops the number beside it. `sqldash lint` rejects references on `pie`, `big_number`
 and `table` tiles, a metric that does not exist, a band that is not a pair, and an
 entry with no position or more than one. The chart builder has the same controls

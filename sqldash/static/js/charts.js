@@ -594,7 +594,7 @@ function xyOption(spec, result, forcedColor, height = 0, width = 0) {
   if (spec.type === "bar" && !isTemporal && !horizontal) {
     option.xAxis.axisLabel.interval = "auto";
   }
-  addReferences(option, spec, result, { horizontal, isTemporal, yFormat, width });
+  addReferences(option, spec, result, { horizontal, isTemporal, yFormat, width, height });
   return option;
 }
 
@@ -708,7 +708,8 @@ function reachTimeAxis(axis, times) {
 function matchCategory(value, categories) {
   const text = String(value);
   if (categories.has(text)) return text;
-  for (const c of categories) if (c.startsWith(text)) return c;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+  for (const c of categories) if (c.startsWith(`${text}T`) || c.startsWith(`${text} `)) return c;
   return null;
 }
 
@@ -735,7 +736,44 @@ function referenceLabel(color, surface, position, text, width) {
   };
 }
 
-function addReferences(option, spec, result, { horizontal, isTemporal, yFormat, width = 0 }) {
+/* A whole currency amount on a reference reads as a round target: "$0", not
+   "$0.00". Everything else formats as the axis does. */
+function referenceValue(value, fmt) {
+  const currency = fmt === "currency" ? formatConfig.currency : CURRENCY_CODE.test(fmt) ? fmt : null;
+  if (!currency || !Number.isInteger(value) || Math.abs(value) >= 1000) return formatValue(value, fmt);
+  try {
+    return new Intl.NumberFormat(formatConfig.locale, {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 0,
+    }).format(value);
+  } catch {
+    return formatValue(value, fmt);
+  }
+}
+
+/* A band label sits inside the band's top edge. When the band is too thin to
+   hold it, or another reference line runs through the band, it would sit on
+   that line, so it moves just below the band instead: a value line's own
+   label is above its line, and that side stays clear for it. */
+const BAND_LABEL_ROOM = 22;
+
+function liftCrowdedBandLabels(bandLabels, valueLines, series, references, height) {
+  if (!bandLabels.length) return;
+  const plotted = series
+    .flatMap((s) => s.data.map((d) => finiteNumber(Array.isArray(d) ? d[1] : d)))
+    .filter((v) => v !== null);
+  const all = [0, ...plotted, ...references];
+  const span = Math.max(...all) - Math.min(...all);
+  const plotHeight = Math.max(height - 60, 0);
+  for (const { line, lo, hi } of bandLabels) {
+    const crossed = valueLines.some((y) => y >= lo && y <= hi);
+    const thin = plotHeight > 0 && span > 0 && ((hi - lo) / span) * plotHeight < BAND_LABEL_ROOM;
+    if (crossed || thin) line.yAxis = lo;
+  }
+}
+
+function addReferences(option, spec, result, { horizontal, isTemporal, yFormat, width = 0, height = 0 }) {
   const refs = (spec.references ?? []).filter(Boolean);
   if (!refs.length) return;
   const narrow = width > 0 && width < NARROW_REFERENCE_WIDTH;
@@ -746,6 +784,8 @@ function addReferences(option, spec, result, { horizontal, isTemporal, yFormat, 
   const categories = new Set(result.rows.map((row) => String(row[xi])));
   const lines = [];
   const bands = [];
+  const bandLabels = [];
+  const valueLines = [];
   const values = [];
   const times = [];
   const place = (value) => {
@@ -765,17 +805,19 @@ function addReferences(option, spec, result, { horizontal, isTemporal, yFormat, 
       const [a, b] = ref.y.map(finiteNumber);
       if (a === null || b === null) continue;
       values.push(a, b);
-      const text = label ?? `${formatValue(Math.min(a, b), fmt)} – ${formatValue(Math.max(a, b), fmt)}`;
+      const text = label ?? `${referenceValue(Math.min(a, b), fmt)} – ${referenceValue(Math.max(a, b), fmt)}`;
       bands.push({
         from: { [valueKey]: Math.min(a, b) },
         to: { [valueKey]: Math.max(a, b) },
         color,
       });
-      lines.push({
+      const bandLabel = {
         [valueKey]: Math.max(a, b),
         lineStyle: { color: "transparent", width: 0 },
         label: referenceLabel(color, surface, horizontal ? "insideEndBottom" : "insideStartBottom", text, width),
-      });
+      };
+      lines.push(bandLabel);
+      if (!horizontal) bandLabels.push({ line: bandLabel, lo: Math.min(a, b), hi: Math.max(a, b) });
     } else if (Array.isArray(ref.x)) {
       const [a, b] = ref.x.map(place);
       if (a === null || b === null) {
@@ -805,7 +847,8 @@ function addReferences(option, spec, result, { horizontal, isTemporal, yFormat, 
       const y = finiteNumber(ref.y);
       if (y === null) continue;
       values.push(y);
-      const shown = formatValue(y, fmt);
+      const shown = referenceValue(y, fmt);
+      valueLines.push(y);
       lines.push({
         [valueKey]: y,
         lineStyle,
@@ -820,6 +863,7 @@ function addReferences(option, spec, result, { horizontal, isTemporal, yFormat, 
     }
   }
   if (values.length) reachValueAxis(option[valueKey], values);
+  liftCrowdedBandLabels(bandLabels, valueLines, option.series, values, height);
   const labelsAbove = lines.some((line) => line.label.position === "end");
   if (labelsAbove && option.legend.show) option.grid.top += 18;
   if (isTemporal && times.length) reachTimeAxis(option[categoryKey], times);

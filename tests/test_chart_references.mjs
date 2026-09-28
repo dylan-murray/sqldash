@@ -155,3 +155,69 @@ test("cleanReference writes only what the author set, and nothing half-filled", 
   assert.deepEqual(cleanReference({ metric: "aov", color: "good" }), { metric: "aov", color: "good" });
   assert.equal(cleanReference({ metric: "" }), null);
 });
+
+test("a category marker matches its category exactly, not a longer name", () => {
+  const rows = {
+    columns: categories.columns,
+    rows: [
+      ["homeware", 5],
+      ["homes", 3],
+    ],
+  };
+  const option = translate(
+    { type: "bar", x: "category", y: ["revenue"], references: [{ x: "home" }, { x: "homes" }] },
+    rows
+  );
+  const lines = carrier(option, "__reference_lines").markLine.data;
+  assert.deepEqual(lines.map((l) => l.xAxis), ["homes"]);
+});
+
+test("a date marker still finds its day on a timestamp category axis", () => {
+  const rows = {
+    columns: [
+      { name: "day", type: "timestamp" },
+      { name: "n", type: "integer" },
+    ],
+    rows: [
+      ["2026-09-01T00:00:00", 5],
+      ["2026-09-02T00:00:00", 3],
+    ],
+  };
+  const option = translate({ type: "bar", x: "day", y: ["n"], references: [{ x: "2026-09-02" }] }, rows);
+  assert.equal(carrier(option, "__reference_lines").markLine.data[0].xAxis, "2026-09-02T00:00:00");
+});
+
+test("a whole currency reference drops the cents", () => {
+  const option = translate(
+    {
+      type: "bar",
+      x: "category",
+      y: ["revenue"],
+      format: "currency",
+      references: [{ y: 0, label: "Break-even" }, { y: 12.5 }, { y: [-20, 20] }],
+    },
+    categories
+  );
+  const texts = carrier(option, "__reference_lines").markLine.data.map((l) => l.label.formatter);
+  assert.deepEqual(texts, ["Break-even  $0", "$12.50", "-$20 – $20"]);
+});
+
+test("a band label moves below the band when a line runs through it or it is too thin", () => {
+  const change = {
+    columns: [
+      { name: "week", type: "string" },
+      { name: "change", type: "float" },
+    ],
+    rows: [
+      ["Aug 03", 20000],
+      ["Aug 10", -3000],
+    ],
+  };
+  const edge = (references, height = 300) =>
+    carrier(translate({ type: "bar", x: "week", y: ["change"], references }, change, undefined, height), "__reference_lines")
+      .markLine.data.find((l) => l.lineStyle.color === "transparent").yAxis;
+  assert.equal(edge([{ y: [-2000, 2000], label: "Noise" }, { y: 0, label: "Break-even" }], 0), -2000);
+  assert.equal(edge([{ y: [-500, 500], label: "Noise" }]), -500);
+  assert.equal(edge([{ y: [5000, 15000], label: "Healthy" }]), 15000);
+  assert.equal(edge([{ y: [5000, 15000], label: "Healthy" }], 0), 15000);
+});
