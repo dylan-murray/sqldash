@@ -79,6 +79,11 @@ test("decimal and big-integer text from the warehouse bins as numbers", () => {
   assert.equal(total(summary), 3);
 });
 
+test("a constant column's tooltip shows the exact value", () => {
+  const summary = binValues([0.001, 0.001], {});
+  assert.equal(binLabel(summary.bins[0], "number", summary.digits), "0.001");
+});
+
 test("a constant column is one bin holding every row", () => {
   for (const options of [{}, { bins: 8 }]) {
     const summary = binValues([42, 42, 42], options);
@@ -258,6 +263,8 @@ test("tooltip edges round only as far as they stay distinct, close and exact whe
     [[0.001, 1.001, 2.001], { bins: 2 }],
     [[0.001, 1.001, 2.001], { bin_width: 1, bin_start: 0.001 }],
     [[0, 0.3, 1], { bins: 10 }],
+    [[0.1234567, 1.1234, 1.1234567, 2.1234567], { bins: 2 }],
+    [[22.5, 51.795, 81.08, 100, 374, 200, 300], { bins: 12 }],
   ];
   for (const [values, options] of cases) {
     const summary = binValues(values, options);
@@ -268,10 +275,14 @@ test("tooltip edges round only as far as they stay distinct, close and exact whe
       if (i) assert.ok(v > shown[i - 1], `distinct ${label}`);
       assert.ok(Math.abs(v - edges[i]) <= summary.width / 1000, `close ${label}`);
       if (String(edges[i]).split(".")[1]?.length <= 6) assert.equal(v, edges[i], `short ${label}`);
+      const between = values.filter((x) => x >= Math.min(v, edges[i]) && x < Math.max(v, edges[i]));
+      assert.deepEqual(between, [], `crosses data ${label}`);
     });
   }
-  const uneven = binValues([22.5, 81.08, 100, 374, 200, 300], { bins: 12 });
+  const uneven = binValues([22.5, 81.07, 100, 374, 200, 300], { bins: 12 });
   assert.equal(binLabel(uneven.bins[1], "number", uneven.digits), "51.79 to under 81.08");
+  const crowded = binValues([0.1234567, 1.1234, 1.1234567, 2.1234567], { bins: 2 });
+  assert.equal(binLabel(crowded.bins[0], "number", crowded.digits), "0.1234567 to under 1.1234567");
   const counted = binValues([0.1234567, 1.1234567, 2.1234567], { bins: 2 });
   assert.deepEqual(
     counted.bins.map((b) => binLabel(b, "number", counted.digits)),

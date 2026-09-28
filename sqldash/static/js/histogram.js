@@ -58,15 +58,36 @@ function isShort(value) {
   return decimalsOf(value) <= SHORT_DECIMALS;
 }
 
-function displayDigits(edges, width) {
+function crossesData(edge, shown, sorted) {
+  if (shown === edge) return false;
+  const next = sorted[firstAtLeast(sorted, Math.min(edge, shown))];
+  return next !== undefined && next < Math.max(edge, shown);
+}
+
+function displayDigits(edges, width, sorted) {
   const tolerance = Math.abs(width) / 1000;
   for (let d = 0; d <= MAX_FRACTION_DIGITS; d += 1) {
     const shown = edges.map((e) => (isShort(e) ? e : Number(e.toFixed(d))));
-    const close = shown.every((v, i) => Math.abs(v - edges[i]) <= tolerance);
-    const distinct = shown.every((v, i) => i === 0 || v > shown[i - 1]);
-    if (close && distinct) return d;
+    const faithful = shown.every(
+      (v, i) =>
+        Math.abs(v - edges[i]) <= tolerance &&
+        (i === 0 || v > shown[i - 1]) &&
+        !crossesData(edges[i], v, sorted)
+    );
+    if (faithful) return d;
   }
   return undefined;
+}
+
+function firstAtLeast(sorted, value) {
+  let lo = 0;
+  let hi = sorted.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid] >= value) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
 }
 
 function firstAbove(sorted, value) {
@@ -223,7 +244,7 @@ export function binValues(values, { bins, bin_width: binWidth, bin_start: binSta
   const edge = (i) => edges[i];
   if (!soundLayout({ count: layout.count, edge }, min, max)) return unbinnable();
 
-  summary.digits = displayDigits(edges, layout.width);
+  summary.digits = displayDigits(edges, layout.width, sorted);
 
   const { count, width } = layout;
   const first = edge(0);
@@ -289,7 +310,7 @@ export function exactText(value, fmt) {
 }
 
 export function binLabel(bin, fmt, digits) {
-  if (bin.lo === bin.hi) return formatValue(bin.lo, fmt);
+  if (bin.lo === bin.hi) return exactText(bin.lo, fmt);
   const text = (v) =>
     digits === undefined || isShort(v)
       ? exactText(v, fmt)
