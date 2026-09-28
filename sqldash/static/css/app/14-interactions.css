@@ -38,14 +38,14 @@ body.editing .tile-drill,
 body.editing .tile-xf { display: none; }
 
 .tile-body .chart-mount:focus-visible,
-.big-number.is-drill:focus-visible {
+.big-number:is(.is-drill, .is-filter):focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
   border-radius: var(--radius-sm);
 }
-.big-number.is-drill { cursor: pointer; border-radius: var(--radius-sm); }
-.big-number.is-drill .value { transition: color 0.15s var(--ease); }
-.big-number.is-drill:hover .value {
+.big-number:is(.is-drill, .is-filter) { cursor: pointer; border-radius: var(--radius-sm); }
+.big-number:is(.is-drill, .is-filter) .value { transition: color 0.15s var(--ease); }
+.big-number:is(.is-drill, .is-filter):hover .value {
   color: color-mix(in oklab, var(--wcolor, var(--accent)), var(--ink-1) 30%);
 }
 

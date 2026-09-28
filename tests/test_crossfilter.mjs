@@ -7,6 +7,7 @@ import {
   dimUnpicked,
   offValue,
   picked,
+  rowIsPicked,
   toggled,
 } from "../sqldash/static/js/crossfilter.js";
 
@@ -59,12 +60,16 @@ test("a click sets every mapped filter, and the same click again turns them all 
   assert.deepEqual(other, { region: "us", channel: "store" });
 });
 
-test("the selection is only active while every mapped filter is on", () => {
-  assert.equal(activeValues(plan, { region: "us", channel: "" }, offs), null);
+test("the selection is active while any mapped filter is on, and an off one matches any row", () => {
+  assert.equal(activeValues(plan, { region: "all", channel: "" }, offs), null);
   assert.deepEqual(activeValues(plan, { region: "us", channel: "web" }, offs), {
     region: "us",
     channel: "web",
   });
+  const partial = activeValues(plan, { region: "us", channel: "" }, offs);
+  assert.deepEqual(partial, { region: "us" });
+  assert.equal(rowIsPicked(plan, result.rows[2], result.columns, partial), true);
+  assert.equal(rowIsPicked(plan, result.rows[1], result.columns, partial), false);
 });
 
 test("a missing column or a null is refused", () => {
@@ -85,4 +90,34 @@ test("marks outside the selection are dimmed and the picked ones kept", () => {
     [1, 0.28, 1],
   );
   assert.deepEqual(series.data[0].value, ["us", 10]);
+});
+
+test("a line selection fades the stroke and area and keeps only the picked point drawn", () => {
+  const days = Array.from({ length: 50 }, (_, i) => [`2026-01-${String(i + 1).padStart(2, "0")}`, i]);
+  const trend = { columns: [{ name: "day", type: "date" }, { name: "n", type: "integer" }], rows: days };
+  const single = crossFilterPlan({ cross_filter: { day: "day" } }, [{ name: "day", type: "date" }]);
+  const option = {
+    series: [
+      {
+        type: "line",
+        name: "N",
+        showSymbol: false,
+        lineStyle: { opacity: 0.55 },
+        areaStyle: { opacity: 1 },
+        data: days,
+      },
+    ],
+  };
+  const spec = { type: "area", x: "day", y: ["n"] };
+  const [series] = dimUnpicked(option, spec, trend, single, { day: "2026-01-10" });
+  assert.equal(series.showSymbol, true);
+  assert.ok(Math.abs(series.lineStyle.opacity - 0.55 * 0.28) < 1e-9);
+  assert.equal(series.areaStyle.opacity, 0.28);
+  assert.equal(series.data[9].symbol, undefined);
+  assert.equal(series.data[0].symbol, "none");
+  const bars = dimUnpicked({ series: [{ ...option.series[0], type: "bar" }] }, spec, trend, single, {
+    day: "2026-01-10",
+  });
+  assert.equal(bars[0].lineStyle, undefined);
+  assert.equal(bars[0].data[0].itemStyle.opacity, 0.28);
 });

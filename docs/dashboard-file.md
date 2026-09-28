@@ -104,7 +104,7 @@ Snapshots render each dashboard to a PNG, so drill links do not carry into them.
 
 `cross_filter:` makes a click set this dashboard's own filters instead of opening
 another one. Every tile that reads those filters runs again, and clicking the same
-bar, slice or row a second time turns them back off:
+bar, point, slice, row or big number a second time turns them back off:
 
 ```yaml
 tiles:
@@ -120,11 +120,12 @@ tiles:
 ```
 
 Each key is a filter on this dashboard and each value is a column of the clicked
-row. Several keys set several filters from one click. A select turns off to `all`
-and any other filter to its default. The tile keeps showing everything and dims the
-marks outside the selection, and a chip in its header shows the value with a button
-that clears it. On a table the first mapped column becomes the toggle, and the
-picked row stays highlighted.
+row. Several keys set several filters from one click, and if any one of them has no
+such value to take, none of them change. A select turns off to `all` and any other
+filter to its default. The tile keeps showing everything and dims the marks outside
+the selection (a line fades and keeps only the picked point), and a chip in its
+header shows the value with a button that clears it. On a table the first mapped
+column becomes the toggle, and the picked row stays highlighted.
 
 A date range cannot be cross-filtered, since a click sets one value. `sqldash lint`
 errors on a filter the dashboard does not declare, and warns when the tile's own

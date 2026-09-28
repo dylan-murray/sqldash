@@ -42,10 +42,9 @@ export function activeValues(plan, current, offs) {
   const values = {};
   for (const { name } of plan.entries) {
     const value = current[name];
-    if (value === undefined || value === "" || value === offs[name]) return null;
-    values[name] = value;
+    if (value !== undefined && value !== "" && value !== offs[name]) values[name] = value;
   }
-  return values;
+  return Object.keys(values).length ? values : null;
 }
 
 export function toggled(plan, values, current, offs) {
@@ -57,21 +56,33 @@ export function toggled(plan, values, current, offs) {
 
 export function rowIsPicked(plan, row, columns, active) {
   const { values } = picked(plan, row, columns);
-  return Boolean(values) && plan.entries.every(({ name }) => values[name] === active[name]);
+  return (
+    Boolean(values) &&
+    plan.entries.every(({ name }) => !(name in active) || values[name] === active[name])
+  );
 }
 
 export function dimUnpicked(option, spec, result, plan, active, opacity = 0.28) {
-  return (option.series ?? []).map((series) => ({
-    data: (series.data ?? []).map((datum, dataIndex) => {
+  return (option.series ?? []).map((series) => {
+    const line = series.type === "line";
+    let missed = false;
+    const data = (series.data ?? []).map((datum, dataIndex) => {
       const name = Array.isArray(datum) ? datum[0] : (datum?.name ?? datum);
       const row = rowForPoint(spec, result, { dataIndex, seriesName: series.name, name });
       const item = datum !== null && typeof datum === "object" && !Array.isArray(datum)
         ? { ...datum }
         : { value: datum };
       if (row && rowIsPicked(plan, row, result.columns, active)) return item;
+      missed = true;
+      if (line && !series.showSymbol) return { ...item, symbol: "none" };
       return { ...item, itemStyle: { ...(item.itemStyle ?? {}), opacity } };
-    }),
-  }));
+    });
+    if (!line || !missed) return { data };
+    const fade = (style) => ({ opacity: (style?.opacity ?? 1) * opacity });
+    const faded = { data, showSymbol: true, lineStyle: fade(series.lineStyle) };
+    if (series.areaStyle) faded.areaStyle = fade(series.areaStyle);
+    return faded;
+  });
 }
 
 export function crossFilterChip(plan, active) {
@@ -93,7 +104,10 @@ export function crossFilterChip(plan, active) {
   const chip = document.createElement("button");
   chip.type = "button";
   chip.className = "tile-xf is-active";
-  const shown = plan.entries.map(({ name }) => active[name]).join(" · ");
+  const shown = plan.entries
+    .filter(({ name }) => name in active)
+    .map(({ name }) => active[name])
+    .join(" · ");
   chip.innerHTML =
     `${FUNNEL}<span>${escapeHtml(shown)}</span>` +
     '<svg class="xf-clear" viewBox="0 0 16 16" width="10" height="10" aria-hidden="true" ' +

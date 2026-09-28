@@ -221,7 +221,8 @@ export function renderTile(el, tile, result, previous = null) {
     }
     if (spec.type === "big_number") {
       markTruncated(body, result);
-      attachBigNumberDrill(body, tile, spec, result);
+      if (plan) attachBigNumberDrill(body, tile, spec, result);
+      else attachBigNumberCrossFilter(body, tile, spec, result);
     }
     if (spec.type === "big_number" && previous && metricHasTime(tile)) {
       renderDelta(body, spec, result, previous, compareLabel);
@@ -432,13 +433,17 @@ function drillContext() {
   return { dashboardName, filters: filterValues(), kinds: filterKinds(), search: location.search };
 }
 
+function clickedRow(spec, result, point) {
+  const drawn = rowForPoint(spec, result, point);
+  return result.unshifted?.[result.rows.indexOf(drawn)] ?? drawn;
+}
+
 function drillFromPoint(plan, spec, result, point, event) {
   if (plan.errors.length) {
     toast(plan.errors[0], "error");
     return;
   }
-  const drawn = rowForPoint(spec, result, point);
-  const row = result.unshifted?.[result.rows.indexOf(drawn)] ?? drawn;
+  const row = clickedRow(spec, result, point);
   const { href, error } = drillUrl(plan, row, result.columns, drillContext());
   if (!href) {
     toast(error, "error");
@@ -520,17 +525,26 @@ function crossActive(plan) {
   return plan.errors.length ? null : activeValues(plan, filterValues(), crossOffs(plan));
 }
 
+function accepts(input, value) {
+  const before = input.value;
+  input.value = value;
+  const ok = input.value === value;
+  input.value = before;
+  return ok;
+}
+
 function setFilters(next) {
-  for (const [name, value] of Object.entries(next)) {
-    const input = filterInput(name);
-    if (!input || input.value === value) continue;
-    const before = input.value;
+  const changes = Object.entries(next)
+    .map(([name, value]) => ({ name, value, input: filterInput(name) }))
+    .filter(({ input, value }) => input && input.value !== value);
+  const refused = changes.find(({ input, value }) => !accepts(input, value));
+  if (refused) {
+    const label = filterLabel(refused.name);
+    toast(`${label} has no '${refused.value}' to filter to, so no filter changed`, "error");
+    return;
+  }
+  for (const { input, value } of changes) {
     input.value = value;
-    if (input.value !== value) {
-      input.value = before;
-      toast(`${filterLabel(name)} has no '${value}' to filter to`, "error");
-      continue;
-    }
     input.dispatchEvent(new Event("change", { bubbles: true }));
   }
 }
@@ -548,9 +562,32 @@ function crossFilterFrom(plan, row, columns) {
   setFilters(toggled(plan, values, filterValues(), crossOffs(plan)));
 }
 
+function attachBigNumberCrossFilter(body, tile, spec, result) {
+  const plan = crossPlan(tile);
+  const box = body.querySelector(".big-number");
+  if (!plan || !box) return;
+  const row = clickedRow(spec, result, { dataIndex: 0 });
+  const active = crossActive(plan);
+  const isPicked = Boolean(active && row) && rowIsPicked(plan, row, result.columns, active);
+  const labels = plan.entries.map(({ def }) => def.label || def.name).join(" and ");
+  box.classList.add("is-filter");
+  box.tabIndex = 0;
+  box.setAttribute("role", "button");
+  box.setAttribute("aria-pressed", String(isPicked));
+  box.setAttribute("aria-label", isPicked ? `Clear ${labels}` : `Filter by ${labels}`);
+  const go = () => crossFilterFrom(plan, row, result.columns);
+  box.addEventListener("click", go);
+  box.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      go();
+    }
+  });
+}
+
 function attachCrossFilterClicks(chart, mount, tile, spec, result) {
   const plan = crossPlan(tile);
-  const pick = (point) => crossFilterFrom(plan, rowForPoint(spec, result, point), result.columns);
+  const pick = (point) => crossFilterFrom(plan, clickedRow(spec, result, point), result.columns);
   chart.off("click");
   chart.on("click", (params) => {
     if (params.componentType === "series") pick(params);

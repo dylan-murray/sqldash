@@ -333,6 +333,31 @@ tiles:
     sql: "SELECT 'k' || i AS k, i AS n FROM range(100) t(i)"
     drill: {dashboard: dest_a, filters: {k: k}}
 """,
+    "xf": """title: XF
+source: {type: duckdb, attach_files: true}
+filters:
+  - {name: region, type: select, options: [all, us, eu]}
+  - {name: channel, type: select, options: [all, web]}
+  - {name: minimum, type: number, default: 0}
+  - {name: day, type: date}
+tiles:
+  - title: Pair
+    chart: table
+    cross_filter: {region: region, channel: channel}
+    sql: "SELECT 'eu' AS region, 'store' AS channel, 1 AS n"
+  - title: Floor
+    chart: table
+    cross_filter: {region: region, minimum: minimum}
+    sql: "SELECT 'eu' AS region, 0 AS minimum, 1 AS n"
+  - title: Headline
+    chart: big_number
+    cross_filter: {region: region}
+    sql: "SELECT 'eu' AS region, 10 AS revenue"
+  - title: Trend
+    chart: {type: line, x: day, y: [n]}
+    cross_filter: {day: day}
+    sql: "SELECT DATE '2026-01-01' + CAST(i AS INTEGER) AS day, i AS n FROM range(50) t(i)"
+""",
     "dest_a": "title: Dest A\nsource: {type: duckdb, attach_files: true}\n"
     "filters:\n  - {name: k, type: text}\ntiles:\n  - {title: A, sql: 'SELECT 1 AS n'}\n",
     "dest_b": "title: Dest B\nsource: {type: duckdb, attach_files: true}\n"
@@ -623,3 +648,72 @@ def test_cross_filter_false_turns_the_same_name_click_off(page, served):
     page.wait_for_timeout(500)
     assert _region(page) == "all"
     assert page.locator('.tile[data-tile-id="muted_regions"] .tile-xf').count() == 0
+
+
+def _xf_tile(page, tile):
+    return page.locator(f'.tile[data-tile-id="{tile}"]')
+
+
+def test_a_click_that_one_filter_cannot_take_changes_no_filter(page, edges):
+    page.goto(f"{edges}/d/xf")
+    _wait_tiles(page)
+    _xf_tile(page, "pair").locator("button.cell-filter").click()
+    page.wait_for_selector(".toast-error")
+    assert "has no 'store' to filter to" in page.locator(".toast-error").first.text_content()
+    page.wait_for_timeout(300)
+    assert _region(page) == "all"
+    assert "f_region" not in page.url
+
+
+def test_a_picked_value_equal_to_a_default_keeps_the_selection_and_its_chip(page, edges):
+    page.goto(f"{edges}/d/xf")
+    _wait_tiles(page)
+    floor = _xf_tile(page, "floor")
+    floor.locator("button.cell-filter").click()
+    page.wait_for_function("() => location.search.includes('f_region=eu')")
+    chip = floor.locator("button.tile-xf")
+    chip.wait_for()
+    assert chip.text_content() == "eu"
+    floor.locator("td.is-picked").wait_for()
+    chip.click()
+    page.wait_for_function("() => location.search.includes('f_region=all')")
+    assert floor.locator("button.tile-xf").count() == 0
+
+
+def test_a_big_number_cross_filters_on_click_and_keyboard(page, edges):
+    page.goto(f"{edges}/d/xf")
+    _wait_tiles(page)
+    number = _xf_tile(page, "headline").locator(".big-number")
+    assert number.get_attribute("role") == "button"
+    number.click()
+    page.wait_for_function("() => location.search.includes('f_region=eu')")
+    number = _xf_tile(page, "headline").locator(".big-number")
+    number.focus()
+    page.keyboard.press("Enter")
+    page.wait_for_function("() => location.search.includes('f_region=all')")
+
+
+def test_a_line_selection_fades_the_stroke_and_marks_the_picked_point(page, edges):
+    page.goto(f"{edges}/d/xf?f_day=2026-01-10")
+    _wait_tiles(page)
+    mount = '.tile[data-tile-id="trend"] .chart-mount'
+    page.wait_for_function(
+        f"() => {{ const m = document.querySelector('{mount}'); "
+        "return Boolean(m && echarts.getInstanceByDom(m)); }"
+    )
+    series = page.evaluate(
+        """(mount) => {
+          const s = echarts.getInstanceByDom(document.querySelector(mount)).getOption().series[0];
+          return {
+            line: s.lineStyle?.opacity ?? 1,
+            show: s.showSymbol,
+            picked: s.data[9].symbol ?? s.symbol,
+            other: s.data[0].symbol ?? s.symbol,
+          };
+        }""",
+        mount,
+    )
+    assert series["line"] < 1, series
+    assert series["show"] is True, series
+    assert series["picked"] != "none", series
+    assert series["other"] == "none", series
