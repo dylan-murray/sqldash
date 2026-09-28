@@ -291,6 +291,26 @@ filters:
 tiles:
   - {title: Rows, sql: "SELECT 1 AS n"}
 """,
+    "carry": """title: Carry
+source: {type: duckdb, attach_files: true}
+filters:
+  - name: rate
+    type: select
+    options_sql: "SELECT 1.00::DECIMAL(5,2) AS rate"
+tiles:
+  - title: Carry
+    chart: table
+    sql: "SELECT 'x' AS k"
+    drill: {dashboard: carry_dest, filters: {k: k, rate: {filter: rate}}}
+""",
+    "carry_dest": """title: Carry dest
+source: {type: duckdb, attach_files: true}
+filters:
+  - {name: k, type: text}
+  - {name: rate, type: select, options: [all, 1.0, 2.0]}
+tiles:
+  - {title: Rows, sql: "SELECT 1 AS n"}
+""",
     "dest_a": "title: Dest A\nsource: {type: duckdb, attach_files: true}\n"
     "filters:\n  - {name: k, type: text}\ntiles:\n  - {title: A, sql: 'SELECT 1 AS n'}\n",
     "dest_b": "title: Dest B\nsource: {type: duckdb, attach_files: true}\n"
@@ -432,3 +452,14 @@ def test_a_text_code_never_drills_into_a_differently_spelled_option(page, edges)
     page.wait_for_selector(".toast-error")
     assert "'00100' is not one of the options" in page.locator(".toast-error").first.text_content()
     assert "/d/codes" in page.url
+
+
+def test_a_carried_decimal_select_drills_into_a_numeric_option(page, edges):
+    page.goto(f"{edges}/d/carry?f_rate=1.00")
+    _wait_tiles(page)
+    page.wait_for_function(
+        "() => document.querySelector('select[data-filter=\"rate\"]').value === '1.00'"
+    )
+    page.locator('.tile[data-tile-id="carry"] a.cell-link').first.click()
+    page.wait_for_url("**/d/carry_dest?**")
+    assert _query(page)["f_rate"] == "1"

@@ -558,3 +558,12 @@ def test_the_filter_bar_values_use_that_spelling_and_keep_their_labels(tmp_path)
 )
 def test_option_value_matches_javascript_string(value, expected):
     assert option_value(value) == expected
+
+
+def test_turning_a_drill_tile_into_text_drops_its_drill(tmp_path):
+    store = _project(tmp_path, overview=OVERVIEW, detail=DETAIL)
+    tile = {"id": "by_customer", "type": "text", "title": "By customer", "markdown": "Notes"}
+    store.upsert_tile("overview", tile, None, store.load("overview")[2])
+    saved = store.load("overview")[0].tiles[0]
+    assert saved.type == "text"
+    assert saved.drill is None

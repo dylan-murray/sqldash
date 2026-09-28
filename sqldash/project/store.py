@@ -940,6 +940,8 @@ def _edit_tile_in_place(
             _delete_key(existing, "chart")
         superseded.add("format")
 
+    if incoming_type == "text" and "drill" not in tile:
+        _replace_key(existing, "drill", None)
     if "drill" in tile:
         wanted = None if tile["drill"] is None else DrillSpec.model_validate(tile["drill"])
         if current is None or _in_order(current.drill) != _in_order(wanted):

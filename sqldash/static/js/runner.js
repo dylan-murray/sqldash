@@ -405,8 +405,17 @@ export function drillPlan(tileId) {
   return drillPlans.get(tileId) ?? null;
 }
 
+function filterKinds() {
+  const kinds = {};
+  for (const select of document.querySelectorAll(".filter-bar select[data-filter]")) {
+    const kind = select.selectedOptions[0]?.dataset.kind;
+    if (kind) kinds[select.dataset.filter] = kind;
+  }
+  return kinds;
+}
+
 function drillContext() {
-  return { dashboardName, filters: filterValues(), search: location.search };
+  return { dashboardName, filters: filterValues(), kinds: filterKinds(), search: location.search };
 }
 
 function drillFromPoint(plan, spec, result, point, event) {

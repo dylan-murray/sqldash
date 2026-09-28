@@ -196,3 +196,12 @@ test("a URL value adopts the option's type but never loosens a text option", () 
   assert.equal(matchOption(options, "2.0", null), "2");
   assert.equal(matchOption(options, "00100", null), undefined);
 });
+
+test("a carried value takes its kind from the source option picked at click time", () => {
+  const carried = plan([
+    { param: "v", type: "select", current: "src", kind: "string", options: ["1", "2"], option_kinds: ["number", "number"] },
+  ]);
+  const at = (kinds) => drillUrl(carried, [], [], { ...context, filters: { src: "1.00" }, kinds });
+  assert.equal(new URL(at({ src: "number" }).href, "http://x").searchParams.get("f_v"), "1");
+  assert.match(at({}).error, /'1.00'/);
+});

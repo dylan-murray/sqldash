@@ -102,7 +102,7 @@ export function drillUrl(plan, row, columns, context) {
     let kind;
     if (param.current !== undefined) {
       text = context.filters[param.current];
-      kind = param.kind ?? "string";
+      kind = context.kinds?.[param.current] ?? param.kind ?? "string";
       if (text === undefined || text === "") continue;
     } else {
       const at = columns.findIndex((c) => c.name === param.column);
