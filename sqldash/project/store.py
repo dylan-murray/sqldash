@@ -353,13 +353,53 @@ def _carry_between(seq: CommentedSeq, index: int, comments: list[_Comment]) -> N
             _give_trailing(seq[-1], comment)
 
 
+def _take_value_trailing(container: Any, key: Any, value: Any) -> _Comment | None:
+    """Detach the comment lines that follow a value in its mapping (``key``)
+    or sequence (index): the lines between it and whatever comes next. ruamel
+    keeps them at the end of the value's subtree, on its deepest last node,
+    for a block collection, and on the container's slot for the key
+    otherwise. The value's own end-of-line comment stays where it is."""
+    if _is_block_collection(value):
+        return _take_trailing(value)
+    slot = 2 if isinstance(container, CommentedMap) else 0
+    entry = container.ca.items.get(key)
+    token = entry[slot] if entry and len(entry) > slot else None
+    raw = token.value.split("\n")[1:] if token is not None else []
+    comment = _detach_after(container, key, slot, value)
+    if comment is None or isinstance(value, _BLOCK_SCALARS):
+        return comment
+    column = next((len(line) - len(line.lstrip()) for line in raw if line.strip()), None)
+    return comment if column is None else _Comment(comment.lines, column)
+
+
+def _give_value_trailing(container: Any, key: Any, value: Any, comment: _Comment | None) -> None:
+    """Put comment lines back after a value: at the end of its subtree for a
+    block collection, or on the container's slot for the key otherwise."""
+    if comment is None:
+        return
+    if _is_block_collection(value):
+        _give_trailing(value, comment)
+    else:
+        slot = 2 if isinstance(container, CommentedMap) else 0
+        _attach_after(container, key, slot, value, comment)
+
+
+def _replace_value(container: Any, key: Any, value: Any) -> None:
+    """Replace a value in place, moving the comment lines that followed the
+    old one to after the new one, so a note over the next key or item is not
+    lost with the subtree it happened to be stored in."""
+    comment = _take_value_trailing(container, key, container[key])
+    container[key] = value
+    _give_value_trailing(container, key, value, comment)
+
+
 def _delete_key(mapping: CommentedMap, key: str) -> None:
     """Delete a key, keeping the comment lines under it where they are: on the
     key above, or above the item's dash when the key was first, so they still
     precede the key they sat over. Its own end-of-line comment goes with it."""
     keys = list(mapping.keys())
     position = keys.index(key)
-    comment = _detach_after(mapping, key, 2, mapping[key])
+    comment = _take_value_trailing(mapping, key, mapping[key])
     mapping.ca.items.pop(key, None)
     del mapping[key]
     if comment is None or len(keys) == 1:
@@ -392,7 +432,7 @@ def _put_key(mapping: CommentedMap, key: str, value: Any) -> None:
     `mapping[key] =` then dumps the new key after that comment (#296).
     """
     if key in mapping:
-        mapping[key] = value
+        _replace_value(mapping, key, value)
         return
     trailing = _take_trailing(mapping)
     mapping[key] = value
@@ -553,8 +593,10 @@ def _write_chart(existing: CommentedMap, slim: dict[str, Any]) -> None:
     for key, value in slim.items():
         if key == "references" and isinstance(node.get(key), CommentedSeq):
             _write_references(node[key], value)
-        elif not _same_chart_value(key, node.get(key), value):
-            node[key] = _flow(value)
+        elif key not in node:
+            _put_key(node, key, _flow(value))
+        elif not _same_chart_value(key, node[key], value):
+            _replace_value(node, key, _flow(value))
     for key in list(node.keys()):
         field = ChartSpec.model_fields.get(key)
         if key not in slim and field is not None and node[key] != field.default:
@@ -603,25 +645,16 @@ def _edit_reference(node: CommentedMap, old: ReferenceLine, new: ReferenceLine, 
     before = old.model_dump(exclude_none=True)
     after = new.model_dump(exclude_none=True)
     for key, value in after.items():
-        if before.get(key) != value:
-            node[key] = _flow(raw[key])
+        if key not in node:
+            _put_key(node, key, _flow(raw[key]))
+        elif before.get(key) != value:
+            _replace_value(node, key, _flow(raw[key]))
     for key in [k for k in node if k not in after]:
         _delete_key(node, key)
 
 
 def _take_item_trailing(seq: CommentedSeq, index: int) -> _Comment | None:
-    """Detach the comment lines below item ``index`` (not its own end-of-line
-    comment): the note over the next item. ruamel keeps them on the sequence
-    for a flow item and on the item's deepest last key for a block one, so
-    deleting that key or the item would take them along."""
-    node = seq[index]
-    if _is_block_collection(node):
-        return _take_trailing(node)
-    entry = seq.ca.items.get(index)
-    raw = entry[0].value.split("\n")[1:] if entry and entry[0] is not None else []
-    column = next((len(line) - len(line.lstrip()) for line in raw if line.strip()), 0)
-    comment = _detach_after(seq, index, 0, node)
-    return _Comment(comment.lines, column) if comment else None
+    return _take_value_trailing(seq, index, seq[index])
 
 
 def _give_item_trailing(seq: CommentedSeq, index: int, comment: _Comment | None) -> None:
@@ -631,11 +664,7 @@ def _give_item_trailing(seq: CommentedSeq, index: int, comment: _Comment | None)
     if comment is None:
         return
     if index >= 0:
-        node = seq[index]
-        if _is_block_collection(node):
-            _give_trailing(node, comment)
-        else:
-            _attach_after(seq, index, 0, node, comment)
+        _give_value_trailing(seq, index, seq[index], comment)
         return
     token = _fresh_line_token(comment)
     head = seq.ca.comment

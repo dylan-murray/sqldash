@@ -2751,3 +2751,90 @@ def test_a_comment_under_a_deleted_key_moves_to_the_key_above(tmp_path):
     text, _ = _save_refs(tmp_path, "a", [{"y": 10, "label": "Ten"}, {"y": 20}])
     assert "# the goal colour" in text, text
     assert "color: good" not in text, text
+
+
+_GRID_HEAD = (
+    "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+    'queries: {q: "SELECT 1 AS a, 2 AS b"}\n'
+    "tiles:\n  - title: A\n    query: q\n    chart:\n"
+)
+_GRID_TAIL = "  # the next tile\n  - {title: B, query: q}\n"
+_BAND = "            - 10\n            - 20\n"
+
+
+@pytest.mark.parametrize(
+    ("before", "chart", "after"),
+    [
+        (
+            "      type: bar\n      references:\n        - y:\n"
+            + _BAND
+            + "          # keep this label\n          label: Band\n        - y: 30\n",
+            {"type": "bar", "references": [{"y": [10, 25], "label": "Band"}, {"y": 30}]},
+            "      type: bar\n      references:\n        - y: [10, 25]\n"
+            "          # keep this label\n          label: Band\n        - y: 30\n",
+        ),
+        (
+            "      type: bar\n      references:\n        - label: Band\n          y:\n"
+            + _BAND
+            + "        # keep this for 30\n        - y: 30\n",
+            {"type": "bar", "references": [{"y": [10, 25], "label": "Band"}, {"y": 30}]},
+            "      type: bar\n      references:\n        - label: Band\n          y: [10, 25]\n"
+            "        # keep this for 30\n        - y: 30\n",
+        ),
+        (
+            "      type: bar\n      references:\n        - y: 30\n        - label: Band\n"
+            "          y:\n" + _BAND,
+            {"type": "bar", "references": [{"y": 30}, {"y": [10, 25], "label": "Band"}]},
+            "      type: bar\n      references:\n        - y: 30\n        - label: Band\n"
+            "          y: [10, 25]\n",
+        ),
+        (
+            "      type: bar\n      references:\n        - y: 10\n"
+            "      # keep this x\n      x: a\n",
+            {"type": "bar", "x": "a"},
+            "      type: bar\n      # keep this x\n      x: a\n",
+        ),
+        (
+            "      type: bar\n      references: [{y: 10, label: Ten}]\n"
+            "      # keep this x\n      x: a\n",
+            {"type": "bar", "x": "a"},
+            "      type: bar\n      # keep this x\n      x: a\n",
+        ),
+        (
+            "      type: bar\n      x: a\n      references:\n        - y: 10\n",
+            {"type": "bar", "x": "a"},
+            "      type: bar\n      x: a\n",
+        ),
+        (
+            "      type: bar\n      x: a\n      references: [{y: 10, label: Ten}]\n",
+            {"type": "bar", "x": "a", "references": [{"y": 12, "label": "Ten"}]},
+            "      type: bar\n      x: a\n      references: [{y: 12, label: Ten}]\n",
+        ),
+        (
+            "      type: bar\n      references:\n        - {y: 10, label: Ten}\n"
+            "      # keep this x\n      x: a\n",
+            {"type": "bar", "x": "a", "references": [{"y": 12, "label": "Ten"}]},
+            "      type: bar\n      references:\n        - {y: 12, label: Ten}\n"
+            "      # keep this x\n      x: a\n",
+        ),
+    ],
+    ids=[
+        "nested-band-block-middle-key",
+        "nested-band-block-last-key-middle-item",
+        "nested-band-block-last-item",
+        "delete-block-references-middle",
+        "delete-flow-references-middle",
+        "delete-block-references-last",
+        "replace-flow-reference-last",
+        "replace-flow-reference-middle",
+    ],
+)
+def test_replacing_or_deleting_chart_values_keeps_every_other_line(tmp_path, before, chart, after):
+    (tmp_path / "d.yaml").write_text(_GRID_HEAD + before + _GRID_TAIL)
+    store = DashboardStore(tmp_path)
+    _, _, etag = store.load("d")
+    store.upsert_tile(
+        "d", {"id": "a", "title": "A", "query": "q", "chart": chart}, sql=None, if_match=etag
+    )
+    text = (tmp_path / "d.yaml").read_text()
+    assert text == _GRID_HEAD + after + _GRID_TAIL, text
