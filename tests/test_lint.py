@@ -2027,6 +2027,9 @@ def test_references_validate_their_shape():
         ({"y": [1]}, "two values"),
         ({"y": "lots"}, "valid number"),
         ({"y": float("inf")}, "finite"),
+        ({"x": float("nan")}, "reference 'x' must be a finite number"),
+        ({"x": [1, float("inf")]}, "reference 'x' must be a finite number"),
+        ({"metric": "sales/revenue"}, "reference metric 'sales/revenue' must match"),
         ({"y": 1, "color": "red"}, "series-8"),
         ({"y": 1, "style": "wavy"}, "dotted"),
         ({"y": 1, "format": "furlongs"}, "is not valid"),
@@ -2066,3 +2069,19 @@ def test_lint_rejects_a_reference_to_an_unknown_metric(tmp_path):
     errors = [f.message for f in lint(tmp_path) if f.level == "error"]
     assert any("reference 2 names unknown metric 'revnue'" in m for m in errors), errors
     assert not any("'revenue'" in m and "unknown" in m for m in errors), errors
+
+
+def test_a_metric_reference_counts_as_using_the_date_filter(tmp_path):
+    create_demo(tmp_path)
+    (tmp_path / ".sqldash" / "refs.yaml").write_text(
+        "title: R\n"
+        "source: {type: duckdb, attach_files: true}\n"
+        "filters:\n"
+        "  - {name: dates, type: daterange, default: last_60_days}\n"
+        "tiles:\n"
+        "  - title: T\n"
+        "    sql: SELECT category, SUM(amount) AS revenue FROM orders GROUP BY 1\n"
+        "    chart: {type: bar, references: [{metric: revenue}]}\n"
+    )
+    findings = [f.message for f in lint(tmp_path)]
+    assert not any("filter 'dates' is not used" in m for m in findings), findings

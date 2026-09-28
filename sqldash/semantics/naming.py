@@ -11,7 +11,8 @@ metric an author goes looking for is under the name their BI tool used.
 import re
 from collections.abc import Container
 
-from sqldash.models.semantics import IDENTIFIER, SQL_RESERVED
+from sqldash.models.chart import IDENTIFIER
+from sqldash.models.semantics import SQL_RESERVED
 
 _NON_IDENT = re.compile(r"[^A-Za-z0-9_]+")
 

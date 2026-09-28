@@ -780,6 +780,18 @@ def _reference_findings(tile, file: str, available: dict) -> list[Finding]:
     return findings
 
 
+def _note_metric_use(usage: _TileUsage, dashboard, project_metrics: dict, name: str):
+    """A metric tile or a metric reference runs with the filter bar's values, so
+    its dimensions and time dimension are what make those filters used."""
+    usage.has_metric_tiles = True
+    definition = dashboard.metrics.get(name) or project_metrics[name].definition
+    declared = {d.name for d in definition.dimensions}
+    usage.metric_dimensions.update(declared)
+    if definition.time_dimension is not None:
+        usage.any_metric_with_time = True
+    return definition, declared
+
+
 def _lint_tiles(
     dashboard, file: str, available: dict, project_metrics: dict
 ) -> tuple[list[Finding], _TileUsage]:
@@ -809,6 +821,9 @@ def _lint_tiles(
                 )
             )
         findings.extend(_reference_findings(tile, file, available))
+        for ref in tile.chart.references if tile.chart else []:
+            if ref.metric in available:
+                _note_metric_use(usage, dashboard, project_metrics, ref.metric)
         if tile.query:
             usage.queries.add(tile.query)
         if tile.metric is None:
@@ -826,11 +841,7 @@ def _lint_tiles(
                 )
             )
             continue
-        definition = dashboard.metrics.get(metric_name) or project_metrics[metric_name].definition
-        declared = {d.name for d in definition.dimensions}
-        usage.metric_dimensions.update(declared)
-        if definition.time_dimension is not None:
-            usage.any_metric_with_time = True
+        definition, declared = _note_metric_use(usage, dashboard, project_metrics, metric_name)
         findings.extend(_lint_metric_tile(file, tile, metric_name, definition, declared, dashboard))
     return findings, usage
 

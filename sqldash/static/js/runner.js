@@ -556,7 +556,7 @@ function clearRenderedTile(el, tileId) {
 
 export function tilesUsingParam(name) {
   return dashboard.tiles.filter((w) => {
-    if (w.metric) return true;
+    if (w.metric || w.chart?.references?.some((ref) => ref?.metric)) return true;
     const sql = w.query ? dashboard.queries[w.query] ?? "" : "";
     return paramNamesIn(sql).includes(name);
   });

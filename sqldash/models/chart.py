@@ -26,6 +26,14 @@ ReferenceColor = Literal[
 ]
 NAMED_FORMATS = ("number", "currency", "percent", "compact", "date")
 CURRENCY_CODE = re.compile(r"^[A-Z]{3}$")
+IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def validate_identifier(value: str, label: str) -> str:
+    """Require a SQL-safe identifier; the compiler relies on names never being fragments."""
+    if not IDENTIFIER.match(value):
+        raise ValueError(f"{label} '{value}' must match [A-Za-z_][A-Za-z0-9_]*")
+    return value
 
 
 def validate_format(value: str, label: str = "format") -> str:
@@ -73,6 +81,11 @@ class ReferenceLine(BaseModel):
             validate_format(v)
         return v
 
+    @field_validator("metric")
+    @classmethod
+    def metric_is_identifier(cls, v):
+        return v if v is None else validate_identifier(v, "reference metric")
+
     @model_validator(mode="after")
     def check_one_position(self) -> "ReferenceLine":
         given = [k for k in ("y", "x", "metric") if getattr(self, k) is not None]
@@ -81,10 +94,11 @@ class ReferenceLine(BaseModel):
                 "a reference takes exactly one of 'y' (a value), 'x' (a date or category) "
                 f"or 'metric' (a scalar metric), got {', '.join(given) or 'none'}"
             )
-        if self.y is not None:
-            values = self.y if isinstance(self.y, list) else [self.y]
-            if not all(math.isfinite(v) for v in values):
-                raise ValueError("a reference 'y' must be a finite number")
+        for key in ("y", "x"):
+            value = getattr(self, key)
+            values = value if isinstance(value, list) else [value]
+            if any(isinstance(v, float) and not math.isfinite(v) for v in values):
+                raise ValueError(f"a reference '{key}' must be a finite number")
         for key in ("y", "x"):
             value = getattr(self, key)
             if isinstance(value, list) and len(value) != 2:

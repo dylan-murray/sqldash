@@ -1053,6 +1053,32 @@ async def test_a_dashboard_name_for_an_unknown_repo_is_an_error(tmp_path, monkey
     assert result == {"error": "no repo named 'gamma' (repos: acme, beta)"}
 
 
+@pytest.mark.anyio
+async def test_a_reference_names_its_metric_the_way_a_metric_tile_does(tmp_path, monkeypatch):
+    """A reference runs scoped to its dashboard's repo, where a `repo/metric`
+    name does not resolve, so validation turns it away like a metric tile's."""
+    from test_mcp import call
+
+    server, _, _ = _validators_workspace(tmp_path, monkeypatch, ["acme", "beta"])
+    text = (
+        "title: D\nsource: {type: duckdb, attach_files: true}\ntiles:\n"
+        "  - {title: T, sql: 'SELECT 1 AS a, 2 AS b', chart: {type: bar, references: [{m}]}}\n"
+    )
+    crossed = await call(
+        server,
+        "validate_dashboard",
+        {"yaml_text": text.replace("{m}", "{metric: beta/revenue}"), "name": "acme/d"},
+    )
+    assert not crossed["valid"], crossed
+    assert "reference metric 'beta/revenue' must match" in crossed["errors"][0], crossed
+    bare = await call(
+        server,
+        "validate_dashboard",
+        {"yaml_text": text.replace("{m}", "{metric: revenue}"), "name": "acme/d"},
+    )
+    assert bare["valid"], bare
+
+
 def _workspace_with_a_colliding_metric(tmp_path, monkeypatch):
     """Two repos whose `revenue` runs different SQL, each with a tile on it.
 

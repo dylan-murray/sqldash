@@ -7268,6 +7268,48 @@ def test_reference_lines_draw_a_metric_value_and_reach_past_the_data(page, tmp_p
         _stop_server(server, thread, page)
 
 
+def test_a_metric_reference_follows_the_filters_on_an_unfiltered_query(page, tmp_path_factory):
+    root = tmp_path_factory.mktemp("staleref")
+    create_demo(root)
+    (root / ".sqldash" / "r.yaml").write_text(
+        "title: R\n"
+        "source: {type: duckdb, attach_files: true}\n"
+        "filters:\n"
+        "  - {name: dates, type: daterange, default: last_60_days}\n"
+        "tiles:\n"
+        "  - title: All time\n"
+        "    chart: {type: bar, references: [{metric: revenue, label: In range}]}\n"
+        "    sql: SELECT category, SUM(amount) AS revenue FROM orders GROUP BY 1\n"
+    )
+    app = create_app(root, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    try:
+        page.goto(f"http://127.0.0.1:{port}/d/r", wait_until="load")
+        _wait_tiles(page)
+        read = """() => {
+          const m = document.querySelector('.tile[data-tile-id="all_time"] .chart-mount');
+          const chart = m && echarts.getInstanceByDom(m);
+          const refs = chart?.getOption().series.find((s) => s.name === '__reference_lines');
+          return refs ? refs.markLine.data[0].label.formatter : null;
+        }"""
+        page.wait_for_function(read)
+        before = page.evaluate(read)
+        page.evaluate(
+            """() => {
+              const start = document.querySelector('[data-filter="dates_start"]');
+              const end = new Date(document.querySelector('[data-filter="dates_end"]').value);
+              start.value = new Date(end - 14 * 86400000).toISOString().slice(0, 10);
+              start.dispatchEvent(new Event('change', {bubbles: true}));
+            }"""
+        )
+        page.wait_for_function(
+            f"() => {{ const now = ({read})(); return now && now !== {json.dumps(before)}; }}"
+        )
+        assert page.evaluate(read).startswith("In range  "), page.evaluate(read)
+    finally:
+        _stop_server(server, thread, page)
+
+
 def test_chart_builder_adds_a_reference_and_saves_it(page, tmp_path_factory):
     root = tmp_path_factory.mktemp("builderrefs")
     (root / "d.yaml").write_text(
