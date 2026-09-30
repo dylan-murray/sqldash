@@ -943,12 +943,19 @@ def _edit_tile_in_place(
             _delete_key(existing, "chart")
         superseded.add("format")
 
-    if incoming_type == "text" and "drill" not in tile:
-        _replace_key(existing, "drill", None)
+    if incoming_type == "text":
+        for key in ("drill", "cross_filter"):
+            if key not in tile:
+                _replace_key(existing, key, None)
     if "drill" in tile:
         wanted = None if tile["drill"] is None else DrillSpec.model_validate(tile["drill"])
         if current is None or _in_order(current.drill) != _in_order(wanted):
             _replace_key(existing, "drill", None if wanted is None else _drill_node(tile["drill"]))
+
+    if "cross_filter" in tile:
+        wanted = tile["cross_filter"]
+        if current is None or _in_order(current.cross_filter) != _in_order(wanted):
+            _replace_key(existing, "cross_filter", None if wanted is None else _flow(wanted))
 
     wrote_position = False
     pos = tile.get("position")
@@ -1534,12 +1541,15 @@ class DashboardStore(Store):
                 "chart",
                 "markdown",
                 "drill",
+                "cross_filter",
             ):
                 if key in tile:
                     ordered[key] = tile[key]
             clean = {k: v for k, v in ordered.items() if v is not None}
             if "drill" in clean:
                 clean["drill"] = _drill_node(clean["drill"])
+            if "cross_filter" in clean:
+                clean["cross_filter"] = _flow(clean["cross_filter"])
             if clean.get("type") == "chart":
                 del clean["type"]
             if clean.get("id") and clean.get("title") and clean["id"] == slugify(clean["title"]):

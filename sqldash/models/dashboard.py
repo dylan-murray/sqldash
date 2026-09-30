@@ -214,6 +214,7 @@ class Tile(BaseModel):
     format: str | dict[str, str] | None = None
     markdown: str | None = None
     drill: DrillSpec | None = None
+    cross_filter: dict[str, str] | Literal[False] | None = None
 
     @field_validator("metric", mode="before")
     @classmethod
@@ -249,6 +250,21 @@ class Tile(BaseModel):
             raise ValueError(f"tile '{label}': text tiles require 'markdown'")
         if self.type == "text" and self.drill is not None:
             raise ValueError(f"tile '{label}': 'drill' needs a chart or table tile to click")
+        if self.type == "text" and self.cross_filter is not None:
+            raise ValueError(f"tile '{label}': 'cross_filter' needs a chart or table tile to click")
+        if self.drill is not None and self.cross_filter:
+            raise ValueError(
+                f"tile '{label}': a click either drills or cross-filters; "
+                "keep 'drill' or 'cross_filter', not both"
+            )
+        if self.cross_filter == {}:
+            raise ValueError(
+                f"tile '{label}': cross_filter maps no filters; map one like "
+                "'region: region', or write 'cross_filter: false' to turn clicks off"
+            )
+        for name, column in (self.cross_filter or {}).items():
+            if not column.strip():
+                raise ValueError(f"tile '{label}': cross_filter '{name}' maps to an empty column")
         if self.grain is not None:
             if self.metric is None:
                 raise ValueError(f"tile '{label}': 'grain' requires a 'metric'")

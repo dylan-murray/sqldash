@@ -1,6 +1,7 @@
-/* ---------- drill-down: tile hint, linked cells, breadcrumb ---------- */
+/* ---------- drill-down and cross-filter: tile hints, linked cells, breadcrumb ---------- */
 
-.tile-drill {
+.tile-drill,
+.tile-xf {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -15,29 +16,36 @@
   white-space: nowrap;
   transition: color 0.15s var(--ease), background 0.15s var(--ease);
 }
-.tile-drill span { overflow: hidden; text-overflow: ellipsis; }
-.tile-drill svg { flex: none; }
+.tile-drill span,
+.tile-xf span { overflow: hidden; text-overflow: ellipsis; }
+.tile-drill svg,
+.tile-xf svg { flex: none; }
 .tile:hover .tile-drill,
-.tile:focus-within .tile-drill {
+.tile:focus-within .tile-drill,
+.tile:hover .tile-xf,
+.tile:focus-within .tile-xf {
   color: color-mix(in oklab, var(--wcolor, var(--accent)), var(--ink-1) 25%);
   background: color-mix(in oklab, var(--wcolor, var(--accent)), transparent 90%);
 }
 .tile-drill.is-broken,
-.tile:hover .tile-drill.is-broken {
+.tile:hover .tile-drill.is-broken,
+.tile-xf.is-broken,
+.tile:hover .tile-xf.is-broken {
   color: var(--danger);
   background: var(--danger-soft);
 }
-body.editing .tile-drill { display: none; }
+body.editing .tile-drill,
+body.editing .tile-xf { display: none; }
 
 .tile-body .chart-mount:focus-visible,
-.big-number.is-drill:focus-visible {
+.big-number:is(.is-drill, .is-filter):focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
   border-radius: var(--radius-sm);
 }
-.big-number.is-drill { cursor: pointer; border-radius: var(--radius-sm); }
-.big-number.is-drill .value { transition: color 0.15s var(--ease); }
-.big-number.is-drill:hover .value {
+.big-number:is(.is-drill, .is-filter) { cursor: pointer; border-radius: var(--radius-sm); }
+.big-number:is(.is-drill, .is-filter) .value { transition: color 0.15s var(--ease); }
+.big-number:is(.is-drill, .is-filter):hover .value {
   color: color-mix(in oklab, var(--wcolor, var(--accent)), var(--ink-1) 30%);
 }
 
@@ -91,3 +99,42 @@ table.results a.cell-link:focus-visible { outline: none; box-shadow: inset 0 0 0
 .topbar .crumb-link:hover { background: var(--accent-soft); color: var(--ink-1); }
 .topbar .crumb-link:hover svg { color: var(--accent); }
 .topbar .crumb-link:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+button.tile-xf {
+  border: 0;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 560;
+  cursor: pointer;
+}
+.tile-xf.is-active,
+.tile:hover .tile-xf.is-active {
+  color: var(--accent-ink);
+  background: color-mix(in oklab, var(--wcolor, var(--accent)), var(--ink-1) 12%);
+  box-shadow: 0 1px 2px color-mix(in oklab, var(--wcolor, var(--accent)), transparent 60%);
+}
+.tile-xf.is-active .xf-clear { opacity: 0.75; margin-left: 2px; }
+.tile-xf.is-active:hover .xf-clear { opacity: 1; }
+.tile-xf.is-active:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+table.results td.has-filter { padding: 0; }
+table.results button.cell-filter {
+  display: block;
+  width: 100%;
+  padding: 7px 12px;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: inherit;
+  color: color-mix(in oklab, var(--wcolor, var(--accent)), var(--ink-1) 30%);
+  font-weight: 540;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+table.results tr:hover button.cell-filter { text-decoration: underline; text-underline-offset: 3px; }
+table.results button.cell-filter:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
+table.results tr:has(td.is-picked) td {
+  background: color-mix(in oklab, var(--wcolor, var(--accent)), transparent 88%);
+}
+table.results td.is-picked button.cell-filter { color: var(--ink-1); font-weight: 620; }

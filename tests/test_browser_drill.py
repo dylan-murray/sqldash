@@ -1,7 +1,9 @@
-"""Drill-down in a real browser: a bar and a table cell open the destination
-dashboard filtered to what was clicked, the date range comes along, the
-breadcrumb goes back to the filters the overview had, and a broken link or a
-value the destination cannot show says so instead of opening it unfiltered."""
+"""Drill-down and cross-filter in a real browser. A bar and a table cell open the
+destination dashboard filtered to what was clicked, the date range comes along,
+the breadcrumb goes back to the filters the overview had, and a broken link or a
+value the destination cannot show says so instead of opening it unfiltered. A
+cross-filter click sets this dashboard's filter, re-queries the tiles that read
+it, dims the marks it left out, and the same click or the chip clears it."""
 
 from urllib.parse import parse_qs, urlparse
 
@@ -49,7 +51,17 @@ def served(tmp_path_factory):
     table = "  - title: Recent orders\n    chart: table\n"
     linked = DRILL.replace("      filters:", "      column: category\n      filters:")
     text = text.replace(table, table + linked)
+    pie = "  - title: Revenue share by region\n    chart: pie\n"
+    text = text.replace(pie, pie + "    cross_filter: {region: region}\n")
     text += (
+        "\n  - title: Region table\n"
+        "    chart: table\n"
+        "    cross_filter: {region: region}\n"
+        '    sql: "SELECT region, COUNT(*) AS orders FROM orders GROUP BY 1 ORDER BY 1"\n'
+        "\n  - title: Muted regions\n"
+        "    chart: bar\n"
+        "    cross_filter: false\n"
+        '    sql: "SELECT region, COUNT(*) AS orders FROM orders GROUP BY 1 ORDER BY 1"\n'
         "\n  - title: Broken drill\n"
         "    chart: bar\n"
         "    drill: {dashboard: category_detail, filters: {categry: category}}\n"
@@ -321,6 +333,99 @@ tiles:
     sql: "SELECT 'k' || i AS k, i AS n FROM range(100) t(i)"
     drill: {dashboard: dest_a, filters: {k: k}}
 """,
+    "xf": """title: XF
+source: {type: duckdb, attach_files: true}
+filters:
+  - {name: region, type: select, options: [all, us, eu]}
+  - {name: channel, type: select, options: [all, web]}
+  - {name: minimum, type: number, default: 0}
+  - {name: day, type: date}
+  - {name: cat, type: text}
+tiles:
+  - title: Categories
+    chart: {type: line, x: cat, y: [n]}
+    cross_filter: {cat: cat}
+    sql: "SELECT 'category_' || i AS cat, i AS n FROM range(100) t(i) ORDER BY i"
+  - title: Pair
+    chart: table
+    cross_filter: {region: region, channel: channel}
+    sql: "SELECT 'eu' AS region, 'store' AS channel, 1 AS n"
+  - title: Floor
+    chart: table
+    cross_filter: {region: region, minimum: minimum}
+    sql: "SELECT 'eu' AS region, 0 AS minimum, 1 AS n"
+  - title: Headline
+    chart: big_number
+    cross_filter: {region: region}
+    sql: "SELECT 'eu' AS region, 10 AS revenue"
+  - title: Trend
+    chart: {type: line, x: day, y: [n]}
+    cross_filter: {day: day}
+    sql: "SELECT DATE '2026-01-01' + CAST(i AS INTEGER) AS day, i AS n FROM range(50) t(i)"
+""",
+    "fragile": """title: Fragile
+source: {type: duckdb, attach_files: true}
+filters:
+  - {name: region, type: select, options: [all, us, eu]}
+  - {name: s, type: text, default: "1"}
+tiles:
+  - title: Fragile
+    chart: table
+    cross_filter: {region: region}
+    sql: "SELECT 'eu' AS region, CAST({{ s }} AS INTEGER) AS n"
+""",
+    "bools": """title: Bools
+source: {type: duckdb, attach_files: true}
+filters:
+  - {name: active, type: select, options: [true, false], default: true}
+  - {name: rate, type: select, options: [1.0, 2.0]}
+tiles:
+  - title: Flags
+    chart: table
+    cross_filter: {active: active}
+    sql: "SELECT FALSE AS active, 1 AS n"
+  - title: Rates
+    chart: table
+    cross_filter: {rate: rate}
+    sql: "SELECT 1.0::DOUBLE AS rate, 1 AS n"
+""",
+    "qrates": """title: Query rates
+source: {type: duckdb, attach_files: true}
+filters:
+  - name: rate
+    type: select
+    options_sql: "SELECT CAST(x AS DECIMAL(2,1)) FROM (VALUES (1.0), (2.0)) t(x) ORDER BY 1"
+tiles:
+  - title: Rates
+    chart: table
+    cross_filter: {rate: rate}
+    sql: "SELECT 1::DOUBLE AS rate, 1 AS n"
+""",
+    "slowrates": """title: Slow rates
+source: {type: duckdb, attach_files: true}
+filters:
+  - name: rate
+    type: select
+    options_sql: "SELECT CAST(x AS DECIMAL(2,1)) FROM (VALUES (1.0), (2.0)) t(x) ORDER BY 1"
+tiles:
+  - title: Rates
+    chart: table
+    cross_filter: {rate: rate}
+    sql: "SELECT 1::DOUBLE AS rate, 1 AS n"
+""",
+    "latekind": """title: Late kind
+source: {type: duckdb, attach_files: true}
+filters:
+  - name: rate
+    type: select
+    default: '1.0'
+    options_sql: "SELECT 1.0::DECIMAL(2,1) AS rate"
+tiles:
+  - title: Rates
+    chart: table
+    cross_filter: {rate: rate}
+    sql: "SELECT 1::DOUBLE AS rate, 1 AS n"
+""",
     "dest_a": "title: Dest A\nsource: {type: duckdb, attach_files: true}\n"
     "filters:\n  - {name: k, type: text}\ntiles:\n  - {title: A, sql: 'SELECT 1 AS n'}\n",
     "dest_b": "title: Dest B\nsource: {type: duckdb, attach_files: true}\n"
@@ -499,3 +604,334 @@ def test_sorting_a_drill_table_keeps_only_its_visible_links(page, edges):
     links = page.locator('.tile[data-tile-id="many"] a.cell-link').count()
     assert links == 100
     assert count == 100
+
+
+def _slice(page, name):
+    page.locator('.tile[data-tile-id="revenue_share_by_region"]').scroll_into_view_if_needed()
+    page.wait_for_function(
+        """() => {
+            const m = document.querySelector(
+                '.tile[data-tile-id="revenue_share_by_region"] .chart-mount');
+            return Boolean(m && echarts.getInstanceByDom(m));
+        }"""
+    )
+    return page.evaluate(
+        """(name) => {
+          const mount = document.querySelector(
+              '.tile[data-tile-id="revenue_share_by_region"] .chart-mount');
+          const chart = echarts.getInstanceByDom(mount);
+          const data = chart.getModel().getSeriesByIndex(0).getData();
+          const layout = data.getItemLayout(data.indexOfName(name));
+          const mid = (layout.startAngle + layout.endAngle) / 2;
+          const radius = (layout.r0 + layout.r) / 2;
+          const r = mount.getBoundingClientRect();
+          return {
+            x: r.x + layout.cx + radius * Math.cos(mid),
+            y: r.y + layout.cy + radius * Math.sin(mid),
+          };
+        }""",
+        name,
+    )
+
+
+def _region(page):
+    return page.eval_on_selector('select[data-filter="region"]', "e => e.value")
+
+
+def _recent_regions(page):
+    return page.eval_on_selector_all(
+        '.tile[data-tile-id="recent_orders"] tbody tr td:nth-child(2)',
+        "cells => [...new Set(cells.map(c => c.textContent))]",
+    )
+
+
+def test_a_slice_cross_filters_the_dashboard_and_the_same_click_clears_it(page, served):
+    page.goto(f"{served}/d/demo")
+    _wait_tiles(page)
+    assert len(_recent_regions(page)) > 1
+    chip = page.locator('.tile[data-tile-id="revenue_share_by_region"] .tile-xf')
+    assert chip.text_content() == "Region"
+    point = _slice(page, "eu")
+    page.mouse.click(point["x"], point["y"])
+    page.wait_for_function("() => location.search.includes('f_region=eu')")
+    page.wait_for_function(
+        """() => [...document.querySelectorAll(
+            '.tile[data-tile-id="recent_orders"] tbody tr td:nth-child(2)')]
+            .every(c => c.textContent === 'eu')"""
+    )
+    assert _region(page) == "eu"
+    opacities = page.evaluate(
+        """() => {
+          const m = document.querySelector(
+              '.tile[data-tile-id="revenue_share_by_region"] .chart-mount');
+          return Object.fromEntries(echarts.getInstanceByDom(m).getOption().series[0].data
+              .map(d => [d.name, d.itemStyle?.opacity ?? 1]));
+        }"""
+    )
+    assert opacities["eu"] == 1
+    assert all(v < 1 for k, v in opacities.items() if k != "eu"), opacities
+    assert (
+        page.locator('.tile[data-tile-id="revenue_share_by_region"] button.tile-xf').text_content()
+        == "eu"
+    )
+    page.mouse.click(point["x"], point["y"])
+    page.wait_for_function("() => location.search.includes('f_region=all')")
+    page.wait_for_function(
+        """() => new Set([...document.querySelectorAll(
+            '.tile[data-tile-id="recent_orders"] tbody tr td:nth-child(2)')]
+            .map(c => c.textContent)).size > 1"""
+    )
+    assert chip.text_content() == "Region"
+    page.mouse.click(point["x"], point["y"])
+    page.wait_for_function("() => location.search.includes('f_region=eu')")
+    page.click('.tile[data-tile-id="revenue_share_by_region"] button.tile-xf')
+    page.wait_for_function("() => location.search.includes('f_region=all')")
+
+
+def test_a_table_cell_toggles_the_filter_and_marks_its_row(page, served):
+    page.goto(f"{served}/d/demo")
+    _wait_tiles(page)
+    cell = page.locator('.tile[data-tile-id="region_table"] button.cell-filter', has_text="us")
+    cell.focus()
+    page.keyboard.press("Enter")
+    page.wait_for_function("() => location.search.includes('f_region=us')")
+    picked = page.locator('.tile[data-tile-id="region_table"] td.is-picked')
+    picked.wait_for()
+    assert picked.text_content() == "us"
+    assert page.locator(".cell-pop").count() == 0
+    page.locator('.tile[data-tile-id="region_table"] button.cell-filter', has_text="us").click()
+    page.wait_for_function("() => location.search.includes('f_region=all')")
+    page.wait_for_function(
+        """() => !document.querySelector('.tile[data-tile-id="region_table"] td.is-picked')"""
+    )
+
+
+def test_cross_filter_false_turns_the_same_name_click_off(page, served):
+    page.goto(f"{served}/d/demo")
+    _wait_tiles(page)
+    bar = _bar(page, "muted_regions", 0)
+    page.mouse.click(bar["x"], bar["y"])
+    page.wait_for_timeout(500)
+    assert _region(page) == "all"
+    assert page.locator('.tile[data-tile-id="muted_regions"] .tile-xf').count() == 0
+
+
+def _xf_tile(page, tile):
+    return page.locator(f'.tile[data-tile-id="{tile}"]')
+
+
+def test_a_click_that_one_filter_cannot_take_changes_no_filter(page, edges):
+    page.goto(f"{edges}/d/xf")
+    _wait_tiles(page)
+    _xf_tile(page, "pair").locator("button.cell-filter").click()
+    page.wait_for_selector(".toast-error")
+    assert "has no 'store' to filter to" in page.locator(".toast-error").first.text_content()
+    page.wait_for_timeout(300)
+    assert _region(page) == "all"
+    assert "f_region" not in page.url
+
+
+def test_a_picked_value_equal_to_a_default_keeps_the_selection_and_its_chip(page, edges):
+    page.goto(f"{edges}/d/xf")
+    _wait_tiles(page)
+    floor = _xf_tile(page, "floor")
+    floor.locator("button.cell-filter").click()
+    page.wait_for_function("() => location.search.includes('f_region=eu')")
+    chip = floor.locator("button.tile-xf")
+    chip.wait_for()
+    assert chip.text_content() == "eu · 0"
+    floor.locator("td.is-picked").wait_for()
+    chip.click()
+    page.wait_for_function("() => location.search.includes('f_region=all')")
+    assert floor.locator("button.tile-xf").count() == 0
+
+
+def test_a_big_number_cross_filters_on_click_and_keyboard(page, edges):
+    page.goto(f"{edges}/d/xf")
+    _wait_tiles(page)
+    number = _xf_tile(page, "headline").locator(".big-number")
+    assert number.get_attribute("role") == "button"
+    number.click()
+    page.wait_for_function("() => location.search.includes('f_region=eu')")
+    number = _xf_tile(page, "headline").locator(".big-number")
+    number.focus()
+    page.keyboard.press("Enter")
+    page.wait_for_function("() => location.search.includes('f_region=all')")
+
+
+def test_a_line_selection_fades_the_stroke_and_marks_the_picked_point(page, edges):
+    page.goto(f"{edges}/d/xf?f_day=2026-01-10")
+    _wait_tiles(page)
+    mount = '.tile[data-tile-id="trend"] .chart-mount'
+    page.wait_for_function(
+        f"() => {{ const m = document.querySelector('{mount}'); "
+        "return Boolean(m && echarts.getInstanceByDom(m)); }"
+    )
+    series = page.evaluate(
+        """(mount) => {
+          const s = echarts.getInstanceByDom(document.querySelector(mount)).getOption().series[0];
+          return {
+            line: s.lineStyle?.opacity ?? 1,
+            show: s.showSymbol,
+            picked: s.data[9].itemStyle?.opacity ?? 1,
+            other: s.data[0].itemStyle?.opacity ?? 1,
+          };
+        }""",
+        mount,
+    )
+    assert series["line"] < 1, series
+    assert series["show"] is True, series
+    assert series["picked"] == 1, series
+    assert series["other"] == 0, series
+
+
+def test_another_point_on_a_long_selected_line_can_still_be_picked(page, edges):
+    page.goto(f"{edges}/d/xf?f_day=2026-01-10")
+    _wait_tiles(page)
+    mount = '.tile[data-tile-id="trend"] .chart-mount'
+    page.locator('.tile[data-tile-id="trend"]').scroll_into_view_if_needed()
+    page.wait_for_function(
+        f"() => {{ const m = document.querySelector('{mount}'); "
+        "return Boolean(m && echarts.getInstanceByDom(m)); }"
+    )
+    point = page.evaluate(
+        """(mount) => {
+          const el = document.querySelector(mount);
+          const chart = echarts.getInstanceByDom(el);
+          const datum = chart.getOption().series[0].data[19];
+          const [x, y] = chart.convertToPixel({seriesIndex: 0}, datum.value ?? datum);
+          const r = el.getBoundingClientRect();
+          return {x: r.x + x, y: r.y + y};
+        }""",
+        mount,
+    )
+    page.mouse.move(point["x"], point["y"])
+    page.wait_for_timeout(200)
+    page.mouse.click(point["x"], point["y"])
+    page.wait_for_function("() => location.search.includes('f_day=2026-01-20')")
+
+
+def test_a_cross_filter_change_elsewhere_keeps_a_failed_tile_showing_its_error(page, edges):
+    page.goto(f"{edges}/d/fragile")
+    _wait_tiles(page)
+    tile = _xf_tile(page, "fragile")
+    assert tile.locator("td").nth(1).text_content() == "1"
+    page.fill('[data-filter="s"]', "x")
+    page.keyboard.press("Enter")
+    tile.locator(".tile-status .err").wait_for()
+    page.select_option('select[data-filter="region"]', "eu")
+    page.wait_for_function("() => location.search.includes('f_region=eu')")
+    page.wait_for_timeout(500)
+    assert tile.locator(".tile-status .err").count() == 1
+
+
+def test_a_picked_category_keeps_its_marker_on_a_dense_line(page, edges):
+    page.goto(f"{edges}/d/xf?f_cat=category_1")
+    _wait_tiles(page)
+    mount = '.tile[data-tile-id="categories"] .chart-mount'
+    page.wait_for_function(
+        f"() => {{ const m = document.querySelector('{mount}'); "
+        "return Boolean(m && echarts.getInstanceByDom(m)); }"
+    )
+    page.wait_for_timeout(300)
+    drawn = page.evaluate(
+        """(mount) => {
+          const chart = echarts.getInstanceByDom(document.querySelector(mount));
+          const data = chart.getModel().getSeriesByIndex(0).getData();
+          const el = data.getItemGraphicEl(1);
+          return Boolean(el) && !el.invisible;
+        }""",
+        mount,
+    )
+    assert drawn
+
+
+def test_a_boolean_default_is_off_on_load_and_comes_back_on_clear(page, edges):
+    page.goto(f"{edges}/d/bools")
+    _wait_tiles(page)
+    flags = _xf_tile(page, "flags")
+    assert flags.locator("button.tile-xf").count() == 0
+    flags.locator("button.cell-filter").click()
+    page.wait_for_function("() => location.search.includes('f_active=False')")
+    flags.locator("button.tile-xf").click()
+    page.wait_for_function("() => location.search.includes('f_active=True')")
+    assert page.eval_on_selector('select[data-filter="active"]', "e => e.value") == "True"
+    assert flags.locator("button.tile-xf").count() == 0
+    flags.locator("button.cell-filter").click()
+    page.wait_for_function("() => location.search.includes('f_active=False')")
+    flags.locator("button.cell-filter").click()
+    page.wait_for_function("() => location.search.includes('f_active=True')")
+    assert page.locator(".toast-error").count() == 0
+
+
+def test_a_numeric_select_takes_the_value_a_float_cell_was_clicked_with(page, edges):
+    page.goto(f"{edges}/d/bools")
+    _wait_tiles(page)
+    _xf_tile(page, "rates").locator("button.cell-filter").click()
+    page.wait_for_function("() => location.search.includes('f_rate=1.0')")
+    assert page.eval_on_selector('select[data-filter="rate"]', "e => e.value") == "1.0"
+    assert page.locator(".toast-error").count() == 0
+
+
+def test_a_float_cell_sets_the_matching_option_an_options_sql_query_returned(page, edges):
+    page.goto(f"{edges}/d/qrates")
+    _wait_tiles(page)
+    page.wait_for_function(
+        "() => document.querySelectorAll('select[data-filter=\"rate\"] option').length === 3"
+    )
+    _xf_tile(page, "rates").locator("button.cell-filter").click()
+    page.wait_for_function("() => location.search.includes('f_rate=1.0')")
+    assert page.eval_on_selector('select[data-filter="rate"]', "e => e.value") == "1.0"
+    assert page.locator(".toast-error").count() == 0
+
+
+def _hold_filter_options(page):
+    held = []
+
+    def route(request_route):
+        if "filter_options" in (request_route.request.post_data or ""):
+            held.append(request_route)
+        else:
+            request_route.continue_()
+
+    page.route("**/api/run", route)
+    return held
+
+
+def _release(held):
+    assert held, "the options_sql request was never made"
+    for request_route in held:
+        request_route.continue_()
+
+
+def test_a_cross_filter_click_sees_options_that_loaded_after_the_tile(page, edges):
+    held = _hold_filter_options(page)
+    page.goto(f"{edges}/d/slowrates")
+    _xf_tile(page, "rates").locator("button.cell-filter").wait_for()
+    assert page.eval_on_selector_all('select[data-filter="rate"] option', "o => o.length") == 1
+    _release(held)
+    page.wait_for_function(
+        "() => document.querySelectorAll('select[data-filter=\"rate\"] option').length === 3"
+    )
+    _xf_tile(page, "rates").locator("button.cell-filter").click()
+    page.wait_for_function("() => location.search.includes('f_rate=1.0')")
+    assert page.locator(".toast-error").count() == 0
+
+
+def test_options_that_load_later_replace_the_kinds_the_first_render_saw(page, edges):
+    held = _hold_filter_options(page)
+    page.goto(f"{edges}/d/latekind")
+    _xf_tile(page, "rates").locator("button.cell-filter").wait_for()
+    kinds = 'select[data-filter="rate"] option'
+    assert page.eval_on_selector_all(kinds, "o => o.map(e => e.dataset.kind)") == [
+        "string",
+        "string",
+    ]
+    _release(held)
+    page.wait_for_function(
+        f"() => [...document.querySelectorAll('{kinds}')].map(e => e.dataset.kind).join() "
+        "=== 'string,number'"
+    )
+    _xf_tile(page, "rates").locator("button.cell-filter").click()
+    page.wait_for_function("() => location.search.includes('f_rate=all')")
+    assert page.locator(".toast-error").count() == 0
