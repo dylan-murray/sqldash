@@ -166,7 +166,9 @@ export function tableDrillCells(plan, result, context, notify) {
     notify(`drill column '${column}' is not in this tile's result`);
     return undefined;
   }
-  return (td, row, index) => {
+  const group = new Set();
+  liveLinks.add(group);
+  const cell = (td, row, index) => {
     if (index !== at) return;
     const link = document.createElement("a");
     link.className = "cell-link";
@@ -206,22 +208,35 @@ export function tableDrillCells(plan, result, context, notify) {
       e.stopPropagation();
       if (e.key === "Enter" && !link.hasAttribute("href")) guard(e);
     });
-    liveLinks.add({ link, refresh });
+    group.add({ link, refresh });
     link.append(...td.childNodes);
     td.replaceChildren(link);
     td.classList.add("has-link");
     td.tabIndex = -1;
     refresh();
   };
+  cell.onRows = (tbody) => {
+    for (const entry of group) if (!tbody.contains(entry.link)) group.delete(entry);
+  };
+  return cell;
 }
 
 const liveLinks = new Set();
 
 export function refreshDrillLinks() {
-  for (const entry of liveLinks) {
-    if (entry.link.isConnected) entry.refresh();
-    else liveLinks.delete(entry);
+  for (const group of liveLinks) {
+    for (const entry of group) {
+      if (entry.link.isConnected) entry.refresh();
+      else group.delete(entry);
+    }
+    if (!group.size) liveLinks.delete(group);
   }
+}
+
+export function drillLinkCount() {
+  let count = 0;
+  for (const group of liveLinks) count += group.size;
+  return count;
 }
 
 function pointAt(chart, seriesIndex, dataIndex) {

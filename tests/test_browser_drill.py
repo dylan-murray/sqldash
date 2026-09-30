@@ -313,6 +313,14 @@ filters:
 tiles:
   - {title: Rows, sql: "SELECT 1 AS n"}
 """,
+    "many": """title: Many
+source: {type: duckdb, attach_files: true}
+tiles:
+  - title: Many
+    chart: table
+    sql: "SELECT 'k' || i AS k, i AS n FROM range(100) t(i)"
+    drill: {dashboard: dest_a, filters: {k: k}}
+""",
     "dest_a": "title: Dest A\nsource: {type: duckdb, attach_files: true}\n"
     "filters:\n  - {name: k, type: text}\ntiles:\n  - {title: A, sql: 'SELECT 1 AS n'}\n",
     "dest_b": "title: Dest B\nsource: {type: duckdb, attach_files: true}\n"
@@ -479,3 +487,15 @@ def test_a_carried_decimal_select_drills_into_a_numeric_option(page, edges):
     page.locator('.tile[data-tile-id="carry"] a.cell-link').first.click()
     page.wait_for_url("**/d/carry_dest?**")
     assert _query(page)["f_rate"] == "1.0"
+
+
+def test_sorting_a_drill_table_keeps_only_its_visible_links(page, edges):
+    page.goto(f"{edges}/d/many")
+    _wait_tiles(page)
+    header = page.locator('.tile[data-tile-id="many"] th').nth(1)
+    for _ in range(20):
+        header.click()
+    count = page.evaluate("() => import('/static/js/drill.js').then((m) => m.drillLinkCount())")
+    links = page.locator('.tile[data-tile-id="many"] a.cell-link').count()
+    assert links == 100
+    assert count == 100

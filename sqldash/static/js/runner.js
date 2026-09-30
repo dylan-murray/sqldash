@@ -204,9 +204,8 @@ export function renderTile(el, tile, result, previous = null) {
     const plan = drillPlan(tile.id);
     if (spec.type === "big_number") renderBigNumber(body, spec, result);
     else {
-      renderTable(body, spec, result, {
-        onCell: tableDrillCells(plan, result, drillContext, (m) => toast(m, "error")),
-      });
+      const cells = tableDrillCells(plan, result, drillContext, (m) => toast(m, "error"));
+      renderTable(body, spec, result, { onCell: cells, onRows: cells?.onRows });
     }
     if (spec.type === "big_number") {
       markTruncated(body, result);
