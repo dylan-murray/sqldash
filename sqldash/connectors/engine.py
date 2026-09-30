@@ -34,6 +34,7 @@ from pathlib import Path
 from secrets import token_hex
 from typing import TYPE_CHECKING, Any
 
+import sqlalchemy
 from sqlalchemy import create_engine, event, inspect
 from sqlalchemy.exc import DBAPIError, DisconnectionError, SQLAlchemyError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
@@ -580,6 +581,12 @@ def build_engine(source: "Source", base_dir: Path | None) -> "Engine":
         except ImportError as exc:
             raise ConnectorError(
                 "snowflake support is not installed — run: pip install 'sqldash[snowflake]'"
+            ) from exc
+        except AttributeError as exc:
+            raise ConnectorError(
+                f"snowflake-sqlalchemy does not support the installed SQLAlchemy "
+                f"{sqlalchemy.__version__}; install SQLAlchemy<2.1: "
+                "pip install 'sqlalchemy>=2.0,<2.1'"
             ) from exc
         kwargs = snowflake_connect_kwargs(source, resolve_credentials(source))
         connect_lock = threading.Lock()

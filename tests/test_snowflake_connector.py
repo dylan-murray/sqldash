@@ -1,3 +1,4 @@
+import builtins
 import itertools
 import threading
 import time
@@ -917,3 +918,23 @@ def test_a_session_killed_under_a_statement_drops_only_that_connection(monkeypat
     assert caught.value.connection_invalidated
     assert len(opened) == 3
     assert opened[1] in dbapi
+
+
+def test_a_sqlalchemy_the_snowflake_dialect_cannot_load_names_the_fix(monkeypatch):
+    """SQLAlchemy 2.1 renamed a class snowflake-sqlalchemy 1.x subclasses, so importing
+    the dialect raised a bare AttributeError from deep inside it instead of saying
+    which versions clash."""
+    from sqldash.connectors.engine import build_engine
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "snowflake.sqlalchemy":
+            raise AttributeError(
+                "module 'sqlalchemy.orm.context' has no attribute 'ORMSelectCompileState'"
+            )
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    with pytest.raises(ConnectorError, match=r"SQLAlchemy<2\.1"):
+        build_engine(make_source(username="ada@acme.com"), None)

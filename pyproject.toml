@@ -35,14 +35,17 @@ dependencies = [
     "duckdb>=1.1",
     "markdown-it-py>=3",
     "mcp>=2,<3",
-    "sqlalchemy>=2.0",
+    "sqlalchemy>=2.0,<2.1",
     "duckdb-engine>=0.13",
     "questionary>=2.1.1",
 ]
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.2"]
-snowflake = ["snowflake-connector-python[secure-local-storage]>=3.12", "snowflake-sqlalchemy>=1.6"]
+snowflake = [
+    "snowflake-connector-python[secure-local-storage]>=4.5,<5",
+    "snowflake-sqlalchemy>=1.11,<2",
+]
 bigquery = ["sqlalchemy-bigquery>=1.11"]
 redshift = ["sqlalchemy-redshift>=0.8", "redshift-connector>=2.1"]
 databricks = ["databricks-sqlalchemy>=2.0"]
