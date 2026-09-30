@@ -10,8 +10,10 @@ from urllib.parse import quote
 
 from sqldash.models.dashboard import Dashboard, FilterDef, Tile
 from sqldash.models.drill import CurrentFilter, DrillSpec
-from sqldash.params import option_kind, option_value, select_choices
+from sqldash.params import option_kind, select_choices
 from sqldash.project.store import InvalidDashboardError, NotFoundError, Store
+
+UNCLICKABLE_CHARTS = ("histogram", "heatmap")
 
 SCALAR_ACCEPTS = {
     "text": {"text", "select", "number", "date"},
@@ -80,7 +82,7 @@ def _options(target_filter: FilterDef) -> dict[str, list[str]]:
         return {}
     choices = select_choices(target_filter)
     return {
-        "options": [option_value(o) for o in choices],
+        "options": [str(o) for o in choices],
         "option_kinds": [option_kind(o) for o in choices],
     }
 
@@ -129,6 +131,11 @@ def plan_drill(
         return None
     target, dashboard, problem = _load_target(store, source_name, source, spec)
     errors: list[str] = [problem] if problem else []
+    kind = tile.chart.type if tile.chart else None
+    if kind in UNCLICKABLE_CHARTS:
+        errors.append(
+            f"a {kind} tile cannot drill: its marks are bins or cells, not rows of the result"
+        )
     warnings: list[str] = []
     params: list[dict[str, Any]] = []
     if dashboard is not None:

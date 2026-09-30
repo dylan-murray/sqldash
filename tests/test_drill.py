@@ -7,7 +7,7 @@ from sqlalchemy.exc import NoSuchModuleError
 
 from sqldash.execution import ExecutionRegistry
 from sqldash.lint import lint_project, validate_dashboard
-from sqldash.params import option_value
+from sqldash.params import option_kind
 from sqldash.project.drill import plan_drill, plan_drills
 from sqldash.project.store import (
     DashboardStore,
@@ -502,13 +502,13 @@ def test_an_inline_metric_tile_on_a_missing_dialect_still_gets_a_report(tmp_path
 @pytest.mark.parametrize(
     ("options", "expected", "kind"),
     [
-        ("[true, false]", ["all", "true", "false"], "boolean"),
-        ("[1.0, 2.0]", ["all", "1", "2"], "number"),
-        ("[1e-06, 0.5]", ["all", "0.000001", "0.5"], "number"),
+        ("[true, false]", ["all", "True", "False"], "boolean"),
+        ("[1.0, 2.0]", ["all", "1.0", "2.0"], "number"),
+        ("[1e-06, 0.5]", ["all", "1e-06", "0.5"], "number"),
         ("['100', '00100']", ["all", "100", "00100"], "string"),
     ],
 )
-def test_plan_options_are_spelled_the_way_the_browser_spells_a_cell(
+def test_plan_options_keep_their_authored_spelling_and_their_kind(
     tmp_path, options, expected, kind
 ):
     detail = DETAIL.replace("options: [all, gold, silver]", f"options: {options}")
@@ -523,7 +523,7 @@ def test_plan_options_are_spelled_the_way_the_browser_spells_a_cell(
     assert plan["params"][0]["option_kinds"] == ["string", *[kind] * (len(expected) - 1)]
 
 
-def test_the_filter_bar_values_use_that_spelling_and_keep_their_labels(tmp_path):
+def test_the_filter_bar_keeps_authored_values_and_marks_their_kind(tmp_path):
     detail = DETAIL.replace(
         "  - {name: tier, type: select, options: [all, gold, silver]}\n",
         "  - {name: tier, type: select, options: [true, false], default: true}\n"
@@ -533,31 +533,18 @@ def test_the_filter_bar_values_use_that_spelling_and_keep_their_labels(tmp_path)
     app = create_app(tmp_path, allowed_hosts=["testserver"])
     with TestClient(app) as client:
         page = client.get("/d/detail").text
-    assert '<option value="true" selected data-kind="boolean">True</option>' in page
-    assert '<option value="false" data-kind="boolean">False</option>' in page
-    assert '<option value="1" data-kind="number">1.0</option>' in page
-    assert '<option value="0.000001" data-kind="number">1e-06</option>' in page
+    assert '<option value="True" selected data-kind="boolean">True</option>' in page
+    assert '<option value="False" data-kind="boolean">False</option>' in page
+    assert '<option value="1.0" data-kind="number">1.0</option>' in page
+    assert '<option value="1e-06" data-kind="number">1e-06</option>' in page
 
 
 @pytest.mark.parametrize(
-    ("value", "expected"),
-    [
-        (1.0, "1"),
-        (1e-06, "0.000001"),
-        (1e-07, "1e-7"),
-        (1.5e21, "1.5e+21"),
-        (1e21, "1e+21"),
-        (1e20, "100000000000000000000"),
-        (0.1 + 0.2, "0.30000000000000004"),
-        (-0.000001234, "-0.000001234"),
-        (5e-324, "5e-324"),
-        (True, "true"),
-        (7, "7"),
-        ("True", "True"),
-    ],
+    ("value", "kind"),
+    [(True, "boolean"), (1, "number"), (1.0, "number"), (1e-06, "number"), ("100", "string")],
 )
-def test_option_value_matches_javascript_string(value, expected):
-    assert option_value(value) == expected
+def test_option_kind_names_the_yaml_scalar_type(value, kind):
+    assert option_kind(value) == kind
 
 
 def test_turning_a_drill_tile_into_text_drops_its_drill(tmp_path):
@@ -567,3 +554,19 @@ def test_turning_a_drill_tile_into_text_drops_its_drill(tmp_path):
     saved = store.load("overview")[0].tiles[0]
     assert saved.type == "text"
     assert saved.drill is None
+
+
+@pytest.mark.parametrize(
+    "chart",
+    [
+        "{type: heatmap, x: customer, y: customer_id, value: revenue}",
+        "{type: histogram, x: revenue}",
+    ],
+)
+def test_a_heatmap_or_histogram_cannot_drill(tmp_path, chart):
+    text = _with_drill("{dashboard: detail, filters: {customer: customer}}").replace(
+        "    chart: bar\n", f"    chart: {chart}\n"
+    )
+    store = _project(tmp_path, overview=text, detail=DETAIL)
+    errors = _errors(store)
+    assert any("cannot drill" in e and "tile 'by_customer'" in e for e in errors), errors

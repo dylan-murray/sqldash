@@ -265,16 +265,18 @@ source: {type: duckdb, attach_files: true}
 tiles:
   - title: Typed
     chart: table
-    sql: "SELECT 1.0::DOUBLE AS rate, FALSE AS active"
+    sql: "SELECT 1.0::DOUBLE AS rate, TRUE AS active"
     drill: {dashboard: flags, filters: {rate: rate, active: active}}
 """,
     "flags": """title: Flags
 source: {type: duckdb, attach_files: true}
 filters:
-  - {name: active, type: select, options: [true, false], default: true}
+  - {name: active, type: select, options: [true, false], default: false}
   - {name: rate, type: select, options: [1.0, 2.0]}
 tiles:
-  - {title: Rows, sql: "SELECT 1 AS n"}
+  - title: Bound
+    chart: table
+    sql: "SELECT {{ active }} AS got_active{% if rate %}, {{ rate }} AS got_rate{% endif %}"
 """,
     "codes": """title: Codes
 source: {type: duckdb, attach_files: true}
@@ -424,24 +426,38 @@ def test_a_table_link_invalid_on_load_works_once_the_filters_make_it_valid(page,
     assert _query(page)["f_region"] == "eu"
 
 
+def _bound(page):
+    page.wait_for_function(
+        """() => document.querySelectorAll('.tile[data-tile-id="bound"] td').length > 0"""
+    )
+    return page.eval_on_selector_all(
+        '.tile[data-tile-id="bound"] td', "cells => cells.map(c => c.textContent)"
+    )
+
+
 def test_numeric_and_boolean_cells_drill_into_static_options(page, edges):
     page.goto(f"{edges}/d/typed")
     _wait_tiles(page)
     page.locator('.tile[data-tile-id="typed"] a.cell-link').first.click()
     page.wait_for_url("**/d/flags?**")
     _wait_tiles(page)
-    assert _query(page)["f_rate"] == "1"
-    assert _query(page)["f_active"] == "false"
-    assert page.eval_on_selector('select[data-filter="rate"]', "e => e.value") == "1"
-    assert page.eval_on_selector('select[data-filter="active"]', "e => e.value") == "false"
+    assert _query(page)["f_rate"] == "1.0"
+    assert _query(page)["f_active"] == "True"
+    assert page.eval_on_selector('select[data-filter="rate"]', "e => e.value") == "1.0"
+    assert page.eval_on_selector('select[data-filter="active"]', "e => e.value") == "True"
+    assert _bound(page) == ["True", "1.0"]
     assert page.locator(".toast-error").count() == 0
 
 
-def test_an_old_url_spelling_still_sets_the_filter(page, edges):
+def test_any_url_spelling_binds_the_option_as_the_file_wrote_it(page, edges):
+    page.goto(f"{edges}/d/flags?f_active=true&f_rate=2")
+    _wait_tiles(page)
+    assert page.eval_on_selector('select[data-filter="active"]', "e => e.value") == "True"
+    assert page.eval_on_selector('select[data-filter="rate"]', "e => e.value") == "2.0"
+    assert _bound(page) == ["True", "2.0"]
     page.goto(f"{edges}/d/flags?f_active=False&f_rate=2.0")
     _wait_tiles(page)
-    assert page.eval_on_selector('select[data-filter="active"]', "e => e.value") == "false"
-    assert page.eval_on_selector('select[data-filter="rate"]', "e => e.value") == "2"
+    assert _bound(page) == ["False", "2.0"]
     assert page.locator(".toast-error").count() == 0
 
 
@@ -462,4 +478,4 @@ def test_a_carried_decimal_select_drills_into_a_numeric_option(page, edges):
     )
     page.locator('.tile[data-tile-id="carry"] a.cell-link').first.click()
     page.wait_for_url("**/d/carry_dest?**")
-    assert _query(page)["f_rate"] == "1"
+    assert _query(page)["f_rate"] == "1.0"

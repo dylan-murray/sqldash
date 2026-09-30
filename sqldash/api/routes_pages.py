@@ -13,7 +13,7 @@ from sqldash.api.helpers import client_payload
 from sqldash.api.routes_config import profile_health, repo_rows
 from sqldash.api.routes_events import semantic_layer_event
 from sqldash.models.source import source_label
-from sqldash.params import filter_ui_default, option_kind, option_value, select_choices
+from sqldash.params import filter_ui_default, option_kind, select_choices
 from sqldash.project.drill import dashboard_href
 from sqldash.project.sources import distinct_picker_sources, picker_sources
 from sqldash.project.store import InvalidDashboardError, NotFoundError, compute_etag
@@ -525,9 +525,7 @@ async def dashboard_page(request: Request, name: str):
         item["resolved_default"] = filter_ui_default(f)
         if f.type == "select":
             item["options"] = select_choices(f)
-            item["choices"] = [(option_value(o), o, option_kind(o)) for o in item["options"]]
-            default = item["resolved_default"]
-            item["default_value"] = None if default is None else option_value(default)
+            item["choices"] = [(o, option_kind(o)) for o in item["options"]]
         filters.append(item)
 
     tiles = []

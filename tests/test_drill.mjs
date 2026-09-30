@@ -205,3 +205,26 @@ test("a carried value takes its kind from the source option picked at click time
   assert.equal(new URL(at({ src: "number" }).href, "http://x").searchParams.get("f_v"), "1");
   assert.match(at({}).error, /'1.00'/);
 });
+
+test("a match hands back the option exactly as the file wrote it", () => {
+  const one = (options, kinds, value, type) =>
+    new URL(
+      drillUrl(
+        plan([{ param: "v", type: "select", column: "v", options, option_kinds: kinds }]),
+        [value],
+        [{ name: "v", type }],
+        context,
+      ).href,
+      "http://x",
+    ).searchParams.get("f_v");
+  assert.equal(one(["all", "True", "False"], ["string", "boolean", "boolean"], true, "boolean"), "True");
+  assert.equal(one(["1.0", "2.0"], ["number", "number"], 1, "float"), "1.0");
+  assert.equal(one(["1e-06"], ["number"], 0.000001, "float"), "1e-06");
+  const url = [
+    { value: "all", kind: "string" },
+    { value: "True", kind: "boolean" },
+    { value: "1.0", kind: "number" },
+  ];
+  assert.equal(matchOption(url, "true", null), "True");
+  assert.equal(matchOption(url, "1", null), "1.0");
+});

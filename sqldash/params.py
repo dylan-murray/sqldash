@@ -10,7 +10,6 @@ import math
 import re
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
-from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from sqldash.sqltext import COMMENT, blank
@@ -747,46 +746,6 @@ def param_values(
     return values, missing
 
 
-def _js_number_text(number: float) -> str:
-    """`String(n)` in JavaScript: the shortest round-trip digits, plain between
-    1e-6 and 1e21 and exponential outside it (`1e-7`, `1.5e+21`)."""
-    if math.isnan(number):
-        return "NaN"
-    if math.isinf(number):
-        return "Infinity" if number > 0 else "-Infinity"
-    if number == 0:
-        return "0"
-    _, digits, exponent = Decimal(repr(abs(number))).as_tuple()
-    text = "".join(map(str, digits))
-    stripped = text.rstrip("0")
-    exponent += len(text) - len(stripped)
-    text = stripped.lstrip("0")
-    count, point = len(text), len(text) + exponent
-    sign = "-" if number < 0 else ""
-    if count <= point <= 21:
-        return sign + text + "0" * (point - count)
-    if 0 < point <= 21:
-        return sign + text[:point] + "." + text[point:]
-    if -6 < point <= 0:
-        return sign + "0." + "0" * -point + text
-    tail = f".{text[1:]}" if count > 1 else ""
-    shift = point - 1
-    return f"{sign}{text[0]}{tail}e{'+' if shift > 0 else '-'}{abs(shift)}"
-
-
-def option_value(value: Any) -> str:
-    """The one spelling of a select option's value, shared with the browser: a
-    boolean is `true`/`false` and a number is what `String(n)` gives, so a
-    clicked cell, a URL and the rendered option all name it the same way."""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, float):
-        return _js_number_text(value)
-    return str(value)
-
-
 def option_kind(value: Any) -> str:
     """What an option's YAML scalar is, so the browser only compares it as a
     number or a boolean when the clicked cell is one too: `'100'` is text."""
@@ -805,8 +764,8 @@ def select_choices(filter_def: "FilterDef") -> list[Any]:
     if filter_def.options_sql is not None:
         opts = list(filter_def.options or ["all"])
         default = resolve_default(filter_def)
-        default = "all" if default is None else option_value(default)
-        if default not in {option_value(o) for o in opts}:
+        default = "all" if default is None else str(default)
+        if default not in {str(o) for o in opts}:
             opts.append(default)
         return opts
     opts = list(filter_def.options or [])
