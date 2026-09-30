@@ -97,10 +97,15 @@ SNOWFLAKE_TIMEOUT = (
 )
 SNOWFLAKE_SESSION_GONE = frozenset({390111, 390112, 390114})
 SNOWFLAKE_CONNECTION_CLOSED = 250002
-SNOWFLAKE_SOURCE_ERRNOS = frozenset({390189, 390201, 390202, 390203})
+SNOWFLAKE_SOURCE_ERRNOS = frozenset({390189, 390201})
 SNOWFLAKE_SIGNIN_ERRNOS = frozenset(
     {250006, 250008, 250009, 251005, 251006, 251008, 251010, 251011, 251014, 251015, 251016}
 )
+SNOWFLAKE_AUTHENTICATORS = {
+    "programmatic_access_token": "pat",
+    "snowflake_jwt": "keypair",
+    "snowflake": "password",
+}
 SNOWFLAKE_SIGNIN_MARKERS = (
     "differs from the user currently logged in",
     "saml",
@@ -703,12 +708,24 @@ _SIGNIN_GATES: dict[tuple[str, str, str], SignInGate] = {}
 _SIGNIN_GATES_LOCK = threading.Lock()
 
 
+def snowflake_auth_method(kwargs: dict[str, Any]) -> str:
+    """How these connect kwargs log in. Password and key-pair logins send no
+    ``authenticator``, so it alone would put them on one gate, and a wrong
+    password would pause a key pair that works."""
+    authenticator = str(kwargs.get("authenticator") or "").lower()
+    if authenticator:
+        return SNOWFLAKE_AUTHENTICATORS.get(authenticator, authenticator)
+    if kwargs.get("private_key_file") or kwargs.get("private_key"):
+        return "keypair"
+    return "password"
+
+
 def signin_gate(kwargs: dict[str, Any]) -> SignInGate:
     """The process-wide gate for the identity these Snowflake connect kwargs log in as."""
     key = (
         str(kwargs.get("account") or "").lower(),
         str(kwargs.get("user") or "").lower(),
-        str(kwargs.get("authenticator") or "snowflake").lower(),
+        snowflake_auth_method(kwargs),
     )
     with _SIGNIN_GATES_LOCK:
         return _SIGNIN_GATES.setdefault(key, SignInGate(kwargs.get("user")))
@@ -764,7 +781,8 @@ def build_engine(source: "Source", base_dir: Path | None) -> "Engine":
             return attempt.conn
 
         def connect():
-            waiting = gate.inflight
+            own = mine["attempt"]
+            waiting = None if own is not None and own.done.is_set() else gate.inflight
             if (
                 waiting is not None
                 and not waiting.abandoned()

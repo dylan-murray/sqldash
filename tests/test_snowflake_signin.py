@@ -322,6 +322,95 @@ def test_a_late_sign_in_failure_is_recorded_once_and_not_replayed(driver, monkey
         b.dispose()
 
 
+def test_a_bad_password_does_not_pause_a_key_pair_source(monkeypatch, tmp_path):
+    """Password and key-pair logins send no `authenticator`, so both used to land
+    on one gate, and a wrong password paused a key-pair source that would work."""
+    calls = []
+
+    def connect(**kwargs):
+        method = "keypair" if "private_key_file" in kwargs else "password"
+        calls.append(method)
+        if method == "password":
+            raise snowflake_errors.DatabaseError(
+                msg="Incorrect username or password was specified.", errno=390100
+            )
+        return FakeConn()
+
+    monkeypatch.setattr(snowflake_connector, "connect", connect)
+    monkeypatch.setenv("SNOWFLAKE_TEST_PASSWORD", "wrong")
+    password = engine_module.build_engine(source(password="${env:SNOWFLAKE_TEST_PASSWORD}"), None)
+    keypair = engine_module.build_engine(
+        source(authentication="keypair", private_key_path=str(tmp_path / "k.p8")), None
+    )
+    try:
+        with pytest.raises(ConnectorError, match="Incorrect username or password"):
+            password.raw_connection()
+        keypair.raw_connection().close()
+        with pytest.raises(ConnectorError, match="attempts paused"):
+            password.raw_connection()
+        assert calls == ["password", "keypair"]
+    finally:
+        password.dispose()
+        keypair.dispose()
+
+
+def test_a_finished_connection_is_not_held_behind_another_sources_sign_in(monkeypatch):
+    """A's sign-in outlived SIGNIN_WAIT and then succeeded. B then started a slow
+    sign-in, and A's retry waited on B's instead of taking its own connection."""
+    monkeypatch.setattr(engine_module, "SIGNIN_WAIT", 0.2)
+    monkeypatch.setattr(engine_module, "SIGNIN_RECHECK", 0.05)
+    release_b = threading.Event()
+    calls = []
+
+    def connect(**kwargs):
+        calls.append(kwargs.get("warehouse"))
+        if kwargs.get("warehouse") == "A":
+            time.sleep(0.3)
+        else:
+            release_b.wait(5)
+        return FakeConn()
+
+    monkeypatch.setattr(snowflake_connector, "connect", connect)
+    a = engine_module.build_engine(source(warehouse="A"), None)
+    b = engine_module.build_engine(source(warehouse="B"), None)
+    try:
+        with pytest.raises(ConnectorError, match="waiting for you to sign in"):
+            a.raw_connection()
+        time.sleep(0.2)
+        with pytest.raises(ConnectorError, match="waiting for you to sign in"):
+            b.raw_connection()
+        start = time.monotonic()
+        a.raw_connection().close()
+        assert time.monotonic() - start < 0.5
+        assert calls == ["A", "B"]
+    finally:
+        release_b.set()
+        a.dispose()
+        b.dispose()
+
+
+def test_an_authentication_policy_rejection_pauses_every_source(driver, registry, monkeypatch):
+    """390202 is the account's authentication policy refusing this login method,
+    which no warehouse or role choice changes."""
+
+    def rejected(**kwargs):
+        driver.stats["logins"] += 1
+        raise snowflake_errors.DatabaseError(
+            msg="Authentication attempt rejected by the current authentication policy.",
+            errno=390202,
+        )
+
+    monkeypatch.setattr(snowflake_connector, "connect", rejected)
+    with pytest.raises(ConnectorError), registry.connection(source(), BASE_DIR) as connector:
+        connector.engine.connect()
+    with (
+        pytest.raises(ConnectorError, match="attempts paused"),
+        registry.connection(source(warehouse="WH_BIG"), BASE_DIR) as connector,
+    ):
+        connector.engine.connect()
+    assert driver.stats["logins"] == 1
+
+
 def test_the_memo_follows_the_connector_when_it_drops_an_expired_token(keychain, monkeypatch):
     monkeypatch.setattr(snowflake_tokens, "USES_KEYCHAIN", True)
     snowflake_tokens.remember_snowflake_tokens()
