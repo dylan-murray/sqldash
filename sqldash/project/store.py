@@ -10,6 +10,7 @@ import stat
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
+from copy import deepcopy
 from datetime import date
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -22,7 +23,7 @@ from ruamel.yaml.error import CommentMark
 from ruamel.yaml.scalarstring import FoldedScalarString, LiteralScalarString
 from ruamel.yaml.tokens import CommentToken
 
-from sqldash.models.chart import ChartSpec
+from sqldash.models.chart import ChartSpec, ReferenceLine
 from sqldash.models.dashboard import (
     TILE_LEVEL_DIMENSIONS_HINT,
     Dashboard,
@@ -352,13 +353,53 @@ def _carry_between(seq: CommentedSeq, index: int, comments: list[_Comment]) -> N
             _give_trailing(seq[-1], comment)
 
 
+def _take_value_trailing(container: Any, key: Any, value: Any) -> _Comment | None:
+    """Detach the comment lines that follow a value in its mapping (``key``)
+    or sequence (index): the lines between it and whatever comes next. ruamel
+    keeps them at the end of the value's subtree, on its deepest last node,
+    for a block collection, and on the container's slot for the key
+    otherwise. The value's own end-of-line comment stays where it is."""
+    if _is_block_collection(value):
+        return _take_trailing(value)
+    slot = 2 if isinstance(container, CommentedMap) else 0
+    entry = container.ca.items.get(key)
+    token = entry[slot] if entry and len(entry) > slot else None
+    raw = token.value.split("\n")[1:] if token is not None else []
+    comment = _detach_after(container, key, slot, value)
+    if comment is None or isinstance(value, _BLOCK_SCALARS):
+        return comment
+    column = next((len(line) - len(line.lstrip()) for line in raw if line.strip()), None)
+    return comment if column is None else _Comment(comment.lines, column)
+
+
+def _give_value_trailing(container: Any, key: Any, value: Any, comment: _Comment | None) -> None:
+    """Put comment lines back after a value: at the end of its subtree for a
+    block collection, or on the container's slot for the key otherwise."""
+    if comment is None:
+        return
+    if _is_block_collection(value):
+        _give_trailing(value, comment)
+    else:
+        slot = 2 if isinstance(container, CommentedMap) else 0
+        _attach_after(container, key, slot, value, comment)
+
+
+def _replace_value(container: Any, key: Any, value: Any) -> None:
+    """Replace a value in place, moving the comment lines that followed the
+    old one to after the new one, so a note over the next key or item is not
+    lost with the subtree it happened to be stored in."""
+    comment = _take_value_trailing(container, key, container[key])
+    container[key] = value
+    _give_value_trailing(container, key, value, comment)
+
+
 def _delete_key(mapping: CommentedMap, key: str) -> None:
     """Delete a key, keeping the comment lines under it where they are: on the
     key above, or above the item's dash when the key was first, so they still
     precede the key they sat over. Its own end-of-line comment goes with it."""
     keys = list(mapping.keys())
     position = keys.index(key)
-    comment = _detach_after(mapping, key, 2, mapping[key])
+    comment = _take_value_trailing(mapping, key, mapping[key])
     mapping.ca.items.pop(key, None)
     del mapping[key]
     if comment is None or len(keys) == 1:
@@ -391,7 +432,7 @@ def _put_key(mapping: CommentedMap, key: str, value: Any) -> None:
     `mapping[key] =` then dumps the new key after that comment (#296).
     """
     if key in mapping:
-        mapping[key] = value
+        _replace_value(mapping, key, value)
         return
     trailing = _take_trailing(mapping)
     mapping[key] = value
@@ -486,6 +527,61 @@ def _same_chart_value(key: str, written: Any, incoming: Any) -> bool:
     return written == incoming
 
 
+def _shares_yaml(node: Any, seen: set[int] | None = None, ancestors: tuple = ()) -> bool:
+    """Whether a subtree holds an anchor, an alias or a `<<` merge key, any of
+    which makes an in-place edit reach past the tile being saved. A mapping
+    above it counts too: a tile that is anchored, or that takes its keys from
+    another through `<<`, can share the very chart it seems to own."""
+    for above in ancestors:
+        if getattr(above.anchor, "value", None) is not None or above.merge:
+            return True
+    seen = set() if seen is None else seen
+    anchor = getattr(node, "anchor", None)
+    if anchor is not None and getattr(anchor, "value", None) is not None:
+        return True
+    if not isinstance(node, (CommentedMap, CommentedSeq)):
+        return False
+    if id(node) in seen or (isinstance(node, CommentedMap) and node.merge):
+        return True
+    seen.add(id(node))
+    children = node.values() if isinstance(node, CommentedMap) else node
+    return any(_shares_yaml(child, seen) for child in children)
+
+
+def _plain_scalar(value: Any) -> Any:
+    anchor = getattr(value, "anchor", None)
+    if anchor is None or getattr(anchor, "value", None) is None:
+        return value
+    for kind in (bool, int, float, str):
+        if isinstance(value, kind):
+            return kind(value)
+    return value
+
+
+def _materialized(node: Any) -> Any:
+    """A fully resolved, unshared copy of a subtree: every alias expanded into
+    its own nodes, every `<<` merge written out as the keys it contributed,
+    no anchors left, and each mapping and sequence keeping its flow or block
+    style and its own comments. Editing the copy touches nothing else."""
+    if isinstance(node, CommentedMap):
+        out = CommentedMap()
+        for key, value in node.items():
+            out[key] = _materialized(value)
+        out.ca.items.update({k: deepcopy(v) for k, v in node.ca.items.items() if k in out})
+    elif isinstance(node, CommentedSeq):
+        out = CommentedSeq(_materialized(value) for value in node)
+        out.ca.items.update(deepcopy(node.ca.items))
+    else:
+        return _plain_scalar(node)
+    out.ca.comment = deepcopy(node.ca.comment)
+    out.ca.end = deepcopy(node.ca.end)
+    if node.fa.flow_style():
+        out.fa.set_flow_style()
+    else:
+        out.fa.set_block_style()
+    return out
+
+
 def _write_chart(existing: CommentedMap, slim: dict[str, Any]) -> None:
     """Write a changed chart in the tersest form that still says it: `chart: bar`
     when only the type is set, otherwise key-by-key into the mapping the author
@@ -497,13 +593,123 @@ def _write_chart(existing: CommentedMap, slim: dict[str, Any]) -> None:
     if not isinstance(node, CommentedMap):
         _put_key(existing, "chart", _flow(slim))
         return
+    if _shares_yaml(node, ancestors=(existing,)):
+        node = existing["chart"] = _materialized(node)
     for key, value in slim.items():
-        if not _same_chart_value(key, node.get(key), value):
-            node[key] = _flow(value)
+        if key == "references" and isinstance(node.get(key), CommentedSeq):
+            _write_references(node[key], value)
+        elif key not in node:
+            _put_key(node, key, _flow(value))
+        elif not _same_chart_value(key, node[key], value):
+            _replace_value(node, key, _flow(value))
     for key in list(node.keys()):
         field = ChartSpec.model_fields.get(key)
         if key not in slim and field is not None and node[key] != field.default:
             _delete_key(node, key)
+
+
+def _reference(raw: Any) -> ReferenceLine | None:
+    try:
+        return ReferenceLine.model_validate(dict(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def _write_references(seq: CommentedSeq, incoming: list[Any]) -> None:
+    """Edit an authored `references:` list item by item: a reference that still
+    means the same thing keeps its node (and its style, a `2026-09-01` date
+    staying unquoted), a changed one is edited key by key in the node at its
+    position, a removed one goes, and a new one is written as a flow mapping.
+    Comments stay with the references they sit against."""
+    refs = [_reference(item) for item in seq]
+    free = set(range(len(seq)))
+    wanted = [_reference(value) for value in incoming]
+    kept: list[Any] = [None] * len(incoming)
+    for j, ref in enumerate(wanted):
+        match = next((i for i in sorted(free) if ref is not None and refs[i] == ref), None)
+        if match is not None:
+            free.discard(match)
+            kept[j] = seq[match]
+    for j, value in enumerate(incoming):
+        if kept[j] is not None:
+            continue
+        if j in free and refs[j] is not None and wanted[j] is not None:
+            free.discard(j)
+            below = _take_item_trailing(seq, j)
+            _edit_reference(seq[j], refs[j], wanted[j], value)
+            _give_item_trailing(seq, j, below)
+            kept[j] = seq[j]
+        else:
+            kept[j] = _flow(value)
+    for index in sorted(free, reverse=True):
+        _give_item_trailing(seq, index - 1, _take_item_trailing(seq, index))
+    _rearrange(seq, kept)
+
+
+def _edit_reference(node: CommentedMap, old: ReferenceLine, new: ReferenceLine, raw: Any) -> None:
+    before = old.model_dump(exclude_none=True)
+    after = new.model_dump(exclude_none=True)
+    for key, value in after.items():
+        if key not in node:
+            _put_key(node, key, _flow(raw[key]))
+        elif before.get(key) != value:
+            _replace_value(node, key, _flow(raw[key]))
+    for key in [k for k in node if k not in after]:
+        _delete_key(node, key)
+
+
+def _take_item_trailing(seq: CommentedSeq, index: int) -> _Comment | None:
+    return _take_value_trailing(seq, index, seq[index])
+
+
+def _give_item_trailing(seq: CommentedSeq, index: int, comment: _Comment | None) -> None:
+    """Put comment lines below item ``index``, or at the head of the list when
+    ``index`` is -1: where lines taken from an edited item go back, and where
+    a removed item's go, onto the item above it."""
+    if comment is None:
+        return
+    if index >= 0:
+        _give_value_trailing(seq, index, seq[index], comment)
+        return
+    token = _fresh_line_token(comment)
+    head = seq.ca.comment
+    if head and len(head) > 1 and head[1]:
+        head[1].append(token)
+    else:
+        seq.ca.comment = [None, [token]]
+
+
+def _rearrange(seq: CommentedSeq, wanted: list[Any]) -> None:
+    """Make ``seq`` hold ``wanted`` in order by popping and inserting, never by
+    slice assignment, which wipes the positional comment table where a comment
+    or blank line *between* items lives. Each entry is keyed by index, so it is
+    carried with the node it sits against and re-keyed by the new positions.
+
+    A comment that lands at index 0 stops travelling: YAML has no way to say
+    "this comment belongs to the first item" rather than "to the block", so
+    ruamel reads it back as the sequence's own head comment. It stays at the
+    top: never lost, but no longer moving with its item."""
+    if [id(n) for n in seq] == [id(n) for n in wanted]:
+        return
+    carried = {
+        id(node): seq.ca.items[index] for index, node in enumerate(seq) if index in seq.ca.items
+    }
+    keep = {id(n) for n in wanted}
+    for index in range(len(seq) - 1, -1, -1):
+        if id(seq[index]) not in keep:
+            seq.pop(index)
+    for index, node in enumerate(wanted):
+        if index < len(seq) and seq[index] is node:
+            continue
+        for later in range(index, len(seq)):
+            if seq[later] is node:
+                seq.pop(later)
+                break
+        seq.insert(index, node)
+    seq.ca.items.clear()
+    for index, node in enumerate(seq):
+        if id(node) in carried:
+            seq.ca.items[index] = carried[id(node)]
 
 
 def _slim_metric(metric: dict[str, Any]) -> dict[str, Any]:
@@ -1383,46 +1589,7 @@ class DashboardStore(Store):
                     del node[key]
                 rendered.append(node)
             if isinstance(existing, list):
-                # Not `existing[:] = rendered`: slice assignment wipes the
-                # sequence's positional comment table, which is where a comment
-                # or blank line *between* filters lives — so every save, even a
-                # no-op one, silently deleted them. Pops and inserts keep it,
-                # and an unchanged order touches the list at all.
-                if [id(n) for n in existing] != [id(n) for n in rendered]:
-                    # A comment or blank line between filters is keyed by
-                    # sequence *index*, so popping a node to move it deletes the
-                    # entry outright. Carry each one with the node it sits
-                    # against and re-key by the new positions.
-                    #
-                    # A comment that lands at index 0 stops travelling: YAML has
-                    # no way to say "this comment belongs to the first item"
-                    # rather than "to the block", so ruamel reads it back as the
-                    # sequence's own head comment and it is no longer in the
-                    # table this reads. Attaching it to the node instead does not
-                    # survive the round trip either — it reloads as the head
-                    # comment just the same. So it stays at the top: never lost,
-                    # but no longer moving with its filter.
-                    carried = {
-                        id(node): existing.ca.items[index]
-                        for index, node in enumerate(existing)
-                        if index in existing.ca.items
-                    }
-                    keep = {id(n) for n in rendered}
-                    for index in range(len(existing) - 1, -1, -1):
-                        if id(existing[index]) not in keep:
-                            existing.pop(index)
-                    for index, node in enumerate(rendered):
-                        if index < len(existing) and existing[index] is node:
-                            continue
-                        for later in range(index, len(existing)):
-                            if existing[later] is node:
-                                existing.pop(later)
-                                break
-                        existing.insert(index, node)
-                    existing.ca.items.clear()
-                    for index, node in enumerate(existing):
-                        if id(node) in carried:
-                            existing.ca.items[index] = carried[id(node)]
+                _rearrange(existing, rendered)
             else:
                 keys = list(doc.keys())
                 anchor = next(

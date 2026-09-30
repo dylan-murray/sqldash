@@ -2442,3 +2442,421 @@ def test_a_new_tile_with_only_a_chart_type_writes_the_shorthand(store):
     )
     text = path.read_text()
     assert "    chart: bar\n" in text, text
+
+
+REFERENCES_DOC = (
+    "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+    "queries: {q: \"SELECT DATE '2026-09-01' AS d, 2 AS b\"}\n"
+    "tiles:\n"
+    "  - title: A\n"
+    "    query: q\n"
+    "    chart:\n"
+    "      type: bar\n"
+    "      references:\n"
+    "        # the quarterly goal\n"
+    "        - {y: 150000, label: Goal}\n"
+    "        - {x: 2026-09-01, label: Launch}\n"
+    "        - {y: [1, 2]}\n"
+)
+
+
+def _save_chart(tmp_path, chart):
+    store = DashboardStore(tmp_path)
+    _, _, etag = store.load("d")
+    store.upsert_tile(
+        "d", {"id": "a", "title": "A", "query": "q", "chart": chart}, sql=None, if_match=etag
+    )
+    return (tmp_path / "d.yaml").read_text()
+
+
+def test_changing_the_chart_type_keeps_the_authored_references_untouched(tmp_path):
+    (tmp_path / "d.yaml").write_text(REFERENCES_DOC)
+    text = _save_chart(
+        tmp_path,
+        {
+            "type": "line",
+            "references": [
+                {"y": 150000, "label": "Goal"},
+                {"x": "2026-09-01", "label": "Launch"},
+                {"y": [1, 2]},
+            ],
+        },
+    )
+    assert text == REFERENCES_DOC.replace("      type: bar\n", "      type: line\n"), text
+
+
+def test_removing_one_reference_deletes_only_its_line(tmp_path):
+    (tmp_path / "d.yaml").write_text(REFERENCES_DOC)
+    text = _save_chart(
+        tmp_path,
+        {"type": "bar", "references": [{"y": 150000, "label": "Goal"}, {"y": [1, 2]}]},
+    )
+    assert text == REFERENCES_DOC.replace("        - {x: 2026-09-01, label: Launch}\n", ""), text
+
+
+def test_adding_a_reference_appends_one_flow_mapping(tmp_path):
+    (tmp_path / "d.yaml").write_text(REFERENCES_DOC)
+    text = _save_chart(
+        tmp_path,
+        {
+            "type": "bar",
+            "references": [
+                {"y": 150000, "label": "Goal"},
+                {"x": "2026-09-01", "label": "Launch"},
+                {"y": [1, 2]},
+                {"metric": "revenue_target", "color": "good"},
+            ],
+        },
+    )
+    assert text == REFERENCES_DOC + "        - {metric: revenue_target, color: good}\n", text
+    dashboard, _, _ = DashboardStore(tmp_path).load("d")
+    assert [r.metric for r in dashboard.tiles[0].chart.references] == [
+        None,
+        None,
+        None,
+        "revenue_target",
+    ]
+
+
+def test_references_on_a_new_chart_mapping_write_as_flow(tmp_path):
+    (tmp_path / "d.yaml").write_text(
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        'queries: {q: "SELECT 1 AS a"}\n'
+        "tiles:\n"
+        "  - {title: A, query: q, chart: bar}\n"
+    )
+    text = _save_chart(tmp_path, {"type": "bar", "references": [{"y": 5, "label": "Target"}]})
+    dashboard, _, _ = DashboardStore(tmp_path).load("d")
+    assert dashboard.tiles[0].chart.references[0].y == 5
+    assert "references: [{y: 5, label: Target}]" in text, text
+
+
+COMMENTED_REFERENCES = (
+    "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+    'queries: {q: "SELECT 1 AS a, 2 AS b"}\n'
+    "tiles:\n"
+    "  - title: A\n"
+    "    query: q\n"
+    "    chart:\n"
+    "      type: bar\n"
+    "      references:\n"
+    "        - {y: 10}  # quarterly goal\n"
+    "        # the stretch target\n"
+    "        - {y: 15}  # stretch\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("references", "expected"),
+    [
+        (
+            [{"y": 10}, {"y": 15}, {"y": 20}],
+            COMMENTED_REFERENCES + "        - {y: 20}\n",
+        ),
+        (
+            [{"y": 10}],
+            COMMENTED_REFERENCES.replace("        - {y: 15}  # stretch\n", ""),
+        ),
+        (
+            [{"y": 15}],
+            COMMENTED_REFERENCES.replace("        - {y: 10}  # quarterly goal\n", ""),
+        ),
+        (
+            [{"y": 12}, {"y": 15}],
+            COMMENTED_REFERENCES.replace("{y: 10}", "{y: 12}"),
+        ),
+    ],
+    ids=["append", "remove-last", "remove-first", "edit-in-place"],
+)
+def test_editing_references_keeps_the_comments_around_them(tmp_path, references, expected):
+    (tmp_path / "d.yaml").write_text(COMMENTED_REFERENCES)
+    text = _save_chart(tmp_path, {"type": "bar", "references": references})
+    assert text == expected, text
+
+
+def _save_refs(tmp_path, tile_id, references):
+    store = DashboardStore(tmp_path)
+    _, _, etag = store.load("d")
+    store.upsert_tile(
+        "d",
+        {
+            "id": tile_id,
+            "title": tile_id.upper(),
+            "query": "q",
+            "chart": {"type": "bar", "references": references},
+        },
+        sql=None,
+        if_match=etag,
+    )
+    dashboard, _, _ = store.load("d")
+    refs = {
+        t.id: [r.model_dump(exclude_none=True) for r in t.chart.references] for t in dashboard.tiles
+    }
+    return (tmp_path / "d.yaml").read_text(), refs
+
+
+def _ref_tiles(a_refs: str, b_refs: str) -> str:
+    return (
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        'queries: {q: "SELECT 1 AS a, 2 AS b"}\n'
+        "tiles:\n"
+        "  - title: A\n    query: q\n    chart:\n      type: bar\n      references:\n"
+        + a_refs
+        + "  - title: B\n    query: q\n    chart:\n      type: bar\n      references:\n"
+        + b_refs
+    )
+
+
+SHARED_REFERENCE = _ref_tiles("        - &goal {y: 10, label: Goal}\n", "        - *goal\n")
+
+
+@pytest.mark.parametrize("edited", ["a", "b"])
+def test_editing_a_shared_reference_leaves_the_other_tile_alone(tmp_path, edited):
+    (tmp_path / "d.yaml").write_text(SHARED_REFERENCE)
+    text, refs = _save_refs(tmp_path, edited, [{"y": 20, "label": "Goal"}])
+    other = "b" if edited == "a" else "a"
+    assert refs[edited] == [{"y": 20, "label": "Goal"}], text
+    assert refs[other] == [{"y": 10, "label": "Goal"}], text
+
+
+def test_nested_aliases_in_references_are_expanded_before_an_edit(tmp_path):
+    (tmp_path / "d.yaml").write_text(
+        _ref_tiles(
+            "        - {y: 10, label: &name Goal}\n        - {y: 20, label: *name}\n",
+            "        - {y: 5}\n",
+        )
+    )
+    text, refs = _save_refs(
+        tmp_path, "a", [{"y": 10, "label": "Goal"}, {"y": 20, "label": "Stretch"}]
+    )
+    assert refs["a"] == [{"y": 10, "label": "Goal"}, {"y": 20, "label": "Stretch"}], text
+    assert "&" not in text, text
+    assert "*" not in text, text
+
+
+MERGED_REFERENCE = _ref_tiles(
+    "        - &target {y: 10, color: good, style: solid}\n        - {<<: *target, y: 20}\n",
+    "        - *target\n",
+)
+
+
+def test_overriding_a_merged_reference_key_writes_the_override(tmp_path):
+    (tmp_path / "d.yaml").write_text(MERGED_REFERENCE)
+    text, refs = _save_refs(
+        tmp_path,
+        "a",
+        [
+            {"y": 10, "color": "good", "style": "solid"},
+            {"y": 20, "color": "bad", "style": "solid"},
+        ],
+    )
+    assert refs["a"][1] == {"y": 20, "color": "bad", "style": "solid"}, text
+    assert refs["b"] == [{"y": 10, "color": "good", "style": "solid"}], text
+    assert "<<" not in text.split("  - title: B")[0], text
+
+
+def test_deleting_a_merged_reference_key_takes_it_off(tmp_path):
+    (tmp_path / "d.yaml").write_text(MERGED_REFERENCE)
+    text, refs = _save_refs(
+        tmp_path, "a", [{"y": 10, "color": "good", "style": "solid"}, {"y": 20, "color": "good"}]
+    )
+    assert refs["a"][1] == {"y": 20, "color": "good"}, text
+    assert refs["b"] == [{"y": 10, "color": "good", "style": "solid"}], text
+
+
+@pytest.mark.parametrize("doc", [SHARED_REFERENCE, MERGED_REFERENCE], ids=["alias", "merge"])
+def test_an_unchanged_save_of_shared_references_is_byte_identical(tmp_path, doc):
+    (tmp_path / "d.yaml").write_text(doc)
+    dashboard, _, _ = DashboardStore(tmp_path).load("d")
+    references = [r.model_dump(exclude_none=True) for r in dashboard.tiles[0].chart.references]
+    text, _ = _save_refs(tmp_path, "a", references)
+    assert text == doc, text
+
+
+BLOCK_REFERENCES = _ref_tiles(
+    "        - y: 10\n"
+    "        # keep this for 20\n"
+    "        - y: 20\n"
+    "          label: Twenty\n"
+    "        # keep this for 30\n"
+    "        - y: 30\n",
+    "        - {y: 5}\n",
+)
+
+
+@pytest.mark.parametrize(
+    ("references", "expected"),
+    [
+        (
+            [{"y": 20, "label": "Twenty"}, {"y": 30}],
+            BLOCK_REFERENCES.replace("        - y: 10\n", "", 1),
+        ),
+        (
+            [{"y": 10}, {"y": 30}],
+            BLOCK_REFERENCES.replace("        - y: 20\n          label: Twenty\n", "", 1),
+        ),
+    ],
+    ids=["remove-first", "remove-middle"],
+)
+def test_removing_a_block_reference_keeps_the_comment_over_the_next(tmp_path, references, expected):
+    (tmp_path / "d.yaml").write_text(BLOCK_REFERENCES)
+    text, _ = _save_refs(tmp_path, "a", references)
+    assert text == expected, text
+
+
+LABELLED_BLOCK_REFERENCES = _ref_tiles(
+    "        - y: 10\n          label: Ten\n        # keep this for 20\n        - y: 20\n",
+    "        - {y: 5}\n",
+)
+
+
+@pytest.mark.parametrize(
+    ("references", "expected"),
+    [
+        (
+            [{"y": 10}, {"y": 20}],
+            LABELLED_BLOCK_REFERENCES.replace("          label: Ten\n", "", 1),
+        ),
+        (
+            [{"x": "a", "label": "Ten"}, {"y": 20}],
+            LABELLED_BLOCK_REFERENCES.replace(
+                "        - y: 10\n          label: Ten\n",
+                "        - label: Ten\n          x: a\n",
+                1,
+            ),
+        ),
+        (
+            [{"y": 12, "label": "Ten"}, {"y": 20}],
+            LABELLED_BLOCK_REFERENCES.replace("        - y: 10\n", "        - y: 12\n", 1),
+        ),
+    ],
+    ids=["drop-label", "y-to-x", "change-value"],
+)
+def test_editing_a_block_reference_keeps_the_comment_over_the_next(tmp_path, references, expected):
+    (tmp_path / "d.yaml").write_text(LABELLED_BLOCK_REFERENCES)
+    text, _ = _save_refs(tmp_path, "a", references)
+    assert text == expected, text
+
+
+def test_a_comment_under_a_deleted_key_moves_to_the_key_above(tmp_path):
+    doc = _ref_tiles(
+        "        - y: 10\n"
+        "          label: Ten\n"
+        "          # the goal colour\n"
+        "          color: good\n"
+        "        - y: 20\n",
+        "        - {y: 5}\n",
+    )
+    (tmp_path / "d.yaml").write_text(doc)
+    text, _ = _save_refs(tmp_path, "a", [{"y": 10, "label": "Ten"}, {"y": 20}])
+    assert "# the goal colour" in text, text
+    assert "color: good" not in text, text
+
+
+_GRID_HEAD = (
+    "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+    'queries: {q: "SELECT 1 AS a, 2 AS b"}\n'
+    "tiles:\n  - title: A\n    query: q\n    chart:\n"
+)
+_GRID_TAIL = "  # the next tile\n  - {title: B, query: q}\n"
+_BAND = "            - 10\n            - 20\n"
+
+
+@pytest.mark.parametrize(
+    ("before", "chart", "after"),
+    [
+        (
+            "      type: bar\n      references:\n        - y:\n"
+            + _BAND
+            + "          # keep this label\n          label: Band\n        - y: 30\n",
+            {"type": "bar", "references": [{"y": [10, 25], "label": "Band"}, {"y": 30}]},
+            "      type: bar\n      references:\n        - y: [10, 25]\n"
+            "          # keep this label\n          label: Band\n        - y: 30\n",
+        ),
+        (
+            "      type: bar\n      references:\n        - label: Band\n          y:\n"
+            + _BAND
+            + "        # keep this for 30\n        - y: 30\n",
+            {"type": "bar", "references": [{"y": [10, 25], "label": "Band"}, {"y": 30}]},
+            "      type: bar\n      references:\n        - label: Band\n          y: [10, 25]\n"
+            "        # keep this for 30\n        - y: 30\n",
+        ),
+        (
+            "      type: bar\n      references:\n        - y: 30\n        - label: Band\n"
+            "          y:\n" + _BAND,
+            {"type": "bar", "references": [{"y": 30}, {"y": [10, 25], "label": "Band"}]},
+            "      type: bar\n      references:\n        - y: 30\n        - label: Band\n"
+            "          y: [10, 25]\n",
+        ),
+        (
+            "      type: bar\n      references:\n        - y: 10\n"
+            "      # keep this x\n      x: a\n",
+            {"type": "bar", "x": "a"},
+            "      type: bar\n      # keep this x\n      x: a\n",
+        ),
+        (
+            "      type: bar\n      references: [{y: 10, label: Ten}]\n"
+            "      # keep this x\n      x: a\n",
+            {"type": "bar", "x": "a"},
+            "      type: bar\n      # keep this x\n      x: a\n",
+        ),
+        (
+            "      type: bar\n      x: a\n      references:\n        - y: 10\n",
+            {"type": "bar", "x": "a"},
+            "      type: bar\n      x: a\n",
+        ),
+        (
+            "      type: bar\n      x: a\n      references: [{y: 10, label: Ten}]\n",
+            {"type": "bar", "x": "a", "references": [{"y": 12, "label": "Ten"}]},
+            "      type: bar\n      x: a\n      references: [{y: 12, label: Ten}]\n",
+        ),
+        (
+            "      type: bar\n      references:\n        - {y: 10, label: Ten}\n"
+            "      # keep this x\n      x: a\n",
+            {"type": "bar", "x": "a", "references": [{"y": 12, "label": "Ten"}]},
+            "      type: bar\n      references:\n        - {y: 12, label: Ten}\n"
+            "      # keep this x\n      x: a\n",
+        ),
+    ],
+    ids=[
+        "nested-band-block-middle-key",
+        "nested-band-block-last-key-middle-item",
+        "nested-band-block-last-item",
+        "delete-block-references-middle",
+        "delete-flow-references-middle",
+        "delete-block-references-last",
+        "replace-flow-reference-last",
+        "replace-flow-reference-middle",
+    ],
+)
+def test_replacing_or_deleting_chart_values_keeps_every_other_line(tmp_path, before, chart, after):
+    (tmp_path / "d.yaml").write_text(_GRID_HEAD + before + _GRID_TAIL)
+    store = DashboardStore(tmp_path)
+    _, _, etag = store.load("d")
+    store.upsert_tile(
+        "d", {"id": "a", "title": "A", "query": "q", "chart": chart}, sql=None, if_match=etag
+    )
+    text = (tmp_path / "d.yaml").read_text()
+    assert text == _GRID_HEAD + after + _GRID_TAIL, text
+
+
+TILE_MERGE_REFERENCES = (
+    "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+    'queries: {q: "SELECT 1 AS a, 2 AS b"}\n'
+    "tiles:\n"
+    "  - &base\n"
+    "    title: A\n"
+    "    query: q\n"
+    "    chart:\n"
+    "      type: bar\n"
+    "      references: [{y: 10, label: Goal}]\n"
+    "  - <<: *base\n"
+    "    title: B\n"
+)
+
+
+def test_editing_a_tile_that_merges_another_leaves_its_references_alone(tmp_path):
+    (tmp_path / "d.yaml").write_text(TILE_MERGE_REFERENCES)
+    text, refs = _save_refs(tmp_path, "b", [{"y": 20, "label": "Goal"}])
+    assert refs == {"a": [{"y": 10, "label": "Goal"}], "b": [{"y": 20, "label": "Goal"}]}, text
+    assert text.startswith(TILE_MERGE_REFERENCES.split("  - <<: *base")[0]), text

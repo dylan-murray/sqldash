@@ -338,10 +338,10 @@ function firstColOfTypes(result, typeSet, exclude = []) {
 }
 
 const TYPE_FIELDS = {
-  line: ["x", "y", "group_by", "legend", "format"],
-  bar: ["x", "y", "group_by", "stacked", "orientation", "color_by", "legend", "format"],
-  area: ["x", "y", "group_by", "stacked", "legend", "format"],
-  scatter: ["x", "y", "group_by", "legend", "format"],
+  line: ["x", "y", "group_by", "legend", "format", "references"],
+  bar: ["x", "y", "group_by", "stacked", "orientation", "color_by", "legend", "format", "references"],
+  area: ["x", "y", "group_by", "stacked", "legend", "format", "references"],
+  scatter: ["x", "y", "group_by", "legend", "format", "references"],
   pie: ["label", "value", "legend", "format"],
   big_number: ["value", "format"],
   table: ["format"],
@@ -481,13 +481,13 @@ function baseOption(spec, isTemporal, yFormat, compact) {
   };
 }
 
-export function translate(spec, result, forcedColor, height = 0) {
+export function translate(spec, result, forcedColor, height = 0, width = 0) {
   spec = inferSpec(spec, result);
   if (spec.type === "pie") return pieOption(spec, result);
-  return xyOption(spec, result, forcedColor, height);
+  return xyOption(spec, result, forcedColor, height, width);
 }
 
-function xyOption(spec, result, forcedColor, height = 0) {
+function xyOption(spec, result, forcedColor, height = 0, width = 0) {
   const surface = cssVar("--surface");
   const xType = result.columns[colIndex(result, spec.x)]?.type;
   const isTemporal = TEMPORAL_TYPES.has(xType) && spec.type !== "bar";
@@ -576,12 +576,19 @@ function xyOption(spec, result, forcedColor, height = 0) {
         : { type: "line", lineStyle: { color: cssVar("--baseline"), type: "solid", width: 1 } };
   }
   if (spec.color_by === "value" && spec.type === "bar" && series.length === 1) {
-    const values = series[0].data.map((d) => Number(d[1])).filter((v) => !Number.isNaN(v));
-    if (values.length) {
+    let min = Infinity;
+    let max = -Infinity;
+    for (const d of series[0].data) {
+      const v = Number(d[1]);
+      if (Number.isNaN(v)) continue;
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    if (min <= max) {
       option.visualMap = {
         show: false,
-        min: Math.min(...values),
-        max: Math.max(...values),
+        min,
+        max,
         dimension: 1,
         seriesIndex: 0,
         inRange: { color: [withAlpha(colors[0], 0.3), colors[0]] },
@@ -594,7 +601,364 @@ function xyOption(spec, result, forcedColor, height = 0) {
   if (spec.type === "bar" && !isTemporal && !horizontal) {
     option.xAxis.axisLabel.interval = "auto";
   }
+  addReferences(option, spec, result, { horizontal, isTemporal, yFormat, width, height });
   return option;
+}
+
+export function referenceKind(ref) {
+  if (ref.metric != null) return "metric";
+  if (ref.x != null) return Array.isArray(ref.x) ? "span" : "marker";
+  return Array.isArray(ref.y) ? "band" : "line";
+}
+
+const filled = (v) => v != null && v !== "";
+
+function numberOrNull(v) {
+  if (!filled(v)) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+export function cleanReference(ref) {
+  const kind = referenceKind(ref);
+  const out = {};
+  if (kind === "line") {
+    const y = numberOrNull(ref.y);
+    if (y === null) return null;
+    out.y = y;
+  } else if (kind === "band") {
+    const pair = (ref.y ?? []).map(numberOrNull);
+    if (pair.length !== 2 || pair.includes(null)) return null;
+    out.y = pair;
+  } else if (kind === "marker") {
+    if (!filled(ref.x)) return null;
+    out.x = ref.x;
+  } else if (kind === "span") {
+    const pair = ref.x ?? [];
+    if (pair.length !== 2 || !pair.every(filled)) return null;
+    out.x = [...pair];
+  } else {
+    if (!filled(ref.metric)) return null;
+    out.metric = ref.metric;
+  }
+  for (const key of ["label", "color", "style", "format"]) {
+    if (filled(ref[key])) out[key] = ref[key];
+  }
+  return out;
+}
+
+const REFERENCE_TOKENS = {
+  ink: "--ink-2",
+  muted: "--ink-muted",
+  accent: "--accent",
+  good: "--good-text",
+  bad: "--danger",
+};
+
+function referenceColor(name) {
+  const token = REFERENCE_TOKENS[name ?? "ink"] ?? `--${name}`;
+  return cssVar(token) || cssVar("--ink-2");
+}
+
+function finiteNumber(value) {
+  const n = typeof value === "number" ? value : Number(value);
+  return value !== null && value !== "" && Number.isFinite(n) ? n : null;
+}
+
+/* ECharts' own date parsing (echarts.number.parseDate in the vendored
+   5.5.1): the time axis places series values with it, so a reference has to
+   use it too or it drifts from an identical point. It reads only the hour of
+   an offset, which is why +05:30 lands at +05:00. */
+const ECHARTS_TIME =
+  /^(?:(\d{4})(?:[-/](\d{1,2})(?:[-/](\d{1,2})(?:[T ](\d{1,2})(?::(\d{1,2})(?::(\d{1,2})(?:[.,](\d+))?)?)?(Z|[+-]\d\d:?\d\d)?)?)?)?)?$/;
+
+function timeValue(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? Math.round(value) : null;
+  const m = ECHARTS_TIME.exec(String(value));
+  if (!m || !m[1]) return null;
+  const day = [+m[1], +(m[2] || 1) - 1, +m[3] || 1];
+  const rest = [+(m[5] || 0), +m[6] || 0, m[7] ? +m[7].substring(0, 3) : 0];
+  if (m[8]) {
+    const hour = (+m[4] || 0) - (m[8].toUpperCase() === "Z" ? 0 : +m[8].slice(0, 3));
+    return Date.UTC(...day, hour, ...rest);
+  }
+  return new Date(...day, +m[4] || 0, ...rest).getTime();
+}
+
+function niceStep(raw) {
+  const exp = Math.floor(Math.log10(raw));
+  const f = raw / 10 ** exp;
+  const nice = f < 1.5 ? 1 : f < 2.5 ? 2 : f < 4 ? 3 : f < 7 ? 5 : 10;
+  return nice * 10 ** exp;
+}
+
+const tidy = (n) => Number(n.toPrecision(12));
+
+/* A reference past the data still has to be on the chart, or a target the
+   series never reaches is silently missing. ECharts leaves an axis bound it
+   computes alone when these return null; otherwise both bounds are fixed to a
+   nice step around the data (zero included, as the value axis does) and the
+   references. */
+export function referenceExtent(extent, values, splitNumber = 5) {
+  let lo = Math.min(Number.isFinite(extent.min) ? extent.min : 0, 0);
+  let hi = Math.max(Number.isFinite(extent.max) ? extent.max : 0, 0);
+  if (!values.length || values.every((v) => v >= lo && v <= hi)) return null;
+  lo = Math.min(lo, ...values);
+  hi = Math.max(hi, ...values);
+  const step = niceStep((hi - lo) / splitNumber);
+  if (!Number.isFinite(step) || step <= 0) return null;
+  return { min: tidy(Math.floor(lo / step) * step), max: tidy(Math.ceil(hi / step) * step) };
+}
+
+function reachValueAxis(axis, values) {
+  const split = axis.splitNumber ?? 5;
+  axis.min = (e) => referenceExtent(e, values, split)?.min ?? null;
+  axis.max = (e) => referenceExtent(e, values, split)?.max ?? null;
+}
+
+function reachTimeAxis(axis, times) {
+  if (!times.length) return;
+  const lo = Math.min(...times);
+  const hi = Math.max(...times);
+  axis.min = (e) => (Number.isFinite(e.min) && lo >= e.min ? null : lo);
+  axis.max = (e) => (Number.isFinite(e.max) && hi <= e.max ? null : hi);
+}
+
+/* A category axis numbers its categories in the order the series first
+   show them, and a marker at a number is read as that position, not as the
+   category named by it. So a marker resolves to the category's own text, or
+   to its position when the axis holds numbers. */
+function categoryPositions(series) {
+  const positions = new Map();
+  for (const s of series) {
+    for (const d of s.data) {
+      const x = Array.isArray(d) ? d[0] : d;
+      const text = String(x);
+      if (!positions.has(text)) positions.set(text, typeof x === "string" ? x : positions.size);
+    }
+  }
+  return positions;
+}
+
+/* The time of day a timestamp category carries after its date. */
+const TIME_OF_DAY = /^[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}(:?\d{2})?)?$/;
+
+/* A category marker matches its category exactly. The one exception is a day
+   on a date or timestamp column drawn as categories (a bar chart), where
+   `2026-09-01` names the category `2026-09-01T00:00:00`: only there, and
+   only when what follows the date is a time. */
+function matchCategory(value, categories, temporal) {
+  const text = String(value);
+  if (categories.has(text)) return categories.get(text);
+  if (!temporal || !/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+  for (const [c, at] of categories) {
+    if (c.startsWith(text) && TIME_OF_DAY.test(c.slice(text.length))) return at;
+  }
+  return null;
+}
+
+/* A narrow tile keeps the reference's name and drops the number beside it,
+   then truncates the name: a cut-off "$15…" would read as a different target. */
+const NARROW_REFERENCE_WIDTH = 360;
+
+function referenceLabel(color, surface, position, text, width) {
+  let formatter = String(text ?? "");
+  if (width > 0) {
+    const room = Math.max(6, Math.floor((width * 0.6) / 6.5));
+    if (formatter.length > room) formatter = `${formatter.slice(0, room - 1).trimEnd()}…`;
+  }
+  return {
+    show: true,
+    position,
+    formatter,
+    color,
+    fontSize: 11,
+    fontWeight: 500,
+    backgroundColor: surface,
+    padding: [2, 6],
+    borderRadius: 4,
+  };
+}
+
+/* A whole currency amount on a reference reads as a round target: "$0", not
+   "$0.00". Everything else formats as the axis does. */
+function referenceValue(value, fmt) {
+  const currency = fmt === "currency" ? formatConfig.currency : CURRENCY_CODE.test(fmt) ? fmt : null;
+  if (!currency || !Number.isInteger(value) || Math.abs(value) >= 1000) return formatValue(value, fmt);
+  try {
+    return new Intl.NumberFormat(formatConfig.locale, {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 0,
+    }).format(value);
+  } catch {
+    return formatValue(value, fmt);
+  }
+}
+
+/* A band label sits inside the band's top edge. When the band is too thin to
+   hold it, or another reference line runs through the band, it would sit on
+   that line, so it moves just below the band instead: a value line's own
+   label is above its line, and that side stays clear for it. */
+const BAND_LABEL_ROOM = 22;
+
+function liftCrowdedBandLabels(bandLabels, valueLines, series, references, height) {
+  if (!bandLabels.length) return;
+  let lo = 0;
+  let hi = 0;
+  const reach = (v) => {
+    if (v === null) return;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  };
+  for (const s of series) for (const d of s.data) reach(finiteNumber(Array.isArray(d) ? d[1] : d));
+  for (const v of references) reach(v);
+  const span = hi - lo;
+  const plotHeight = Math.max(height - 60, 0);
+  for (const band of bandLabels) {
+    const crossed = valueLines.some((y) => y >= band.lo && y <= band.hi);
+    const tall = ((band.hi - band.lo) / span) * plotHeight;
+    const thin = plotHeight > 0 && span > 0 && tall < BAND_LABEL_ROOM;
+    if (crossed || thin) band.line.yAxis = band.lo;
+  }
+}
+
+function addReferences(option, spec, result, { horizontal, isTemporal, yFormat, width = 0, height = 0 }) {
+  const refs = (spec.references ?? []).filter(Boolean);
+  if (!refs.length) return;
+  const narrow = width > 0 && width < NARROW_REFERENCE_WIDTH;
+  const surface = cssVar("--surface");
+  const valueKey = horizontal ? "xAxis" : "yAxis";
+  const categoryKey = horizontal ? "yAxis" : "xAxis";
+  const categories = categoryPositions(option.series);
+  const temporalCategories = TEMPORAL_TYPES.has(result.columns[colIndex(result, spec.x)]?.type);
+  const lines = [];
+  const bands = [];
+  const bandLabels = [];
+  const valueLines = [];
+  const values = [];
+  const times = [];
+  const place = (value) => {
+    if (isTemporal) {
+      const t = timeValue(value);
+      if (t === null) return null;
+      times.push(t);
+      return value;
+    }
+    return matchCategory(value, categories, temporalCategories);
+  };
+  for (const ref of refs) {
+    const color = referenceColor(ref.color);
+    const fmt = ref.format || yFormat;
+    const label = ref.label ?? (ref.metric ? humanize(ref.metric) : null);
+    const lineStyle = { color, width: 1.5, type: ref.style || "dashed", opacity: 0.9 };
+    if (Array.isArray(ref.y)) {
+      const [a, b] = ref.y.map(finiteNumber);
+      if (a === null || b === null) continue;
+      values.push(a, b);
+      const text = label ?? `${referenceValue(Math.min(a, b), fmt)} – ${referenceValue(Math.max(a, b), fmt)}`;
+      bands.push({
+        from: { [valueKey]: Math.min(a, b) },
+        to: { [valueKey]: Math.max(a, b) },
+        color,
+      });
+      const bandLabel = {
+        [valueKey]: Math.max(a, b),
+        lineStyle: { color: "transparent", width: 0 },
+        label: referenceLabel(color, surface, horizontal ? "insideEndBottom" : "insideStartBottom", text, width),
+      };
+      lines.push(bandLabel);
+      if (!horizontal) bandLabels.push({ line: bandLabel, lo: Math.min(a, b), hi: Math.max(a, b) });
+    } else if (Array.isArray(ref.x)) {
+      const [a, b] = ref.x.map(place);
+      if (a === null || b === null) {
+        console.warn(`reference x ${JSON.stringify(ref.x)} is not on this chart's x axis`);
+        continue;
+      }
+      bands.push({
+        from: { [categoryKey]: a },
+        to: { [categoryKey]: b },
+        color,
+        text: label,
+        position: horizontal ? "insideTopLeft" : "insideTop",
+      });
+    } else if (ref.x !== null && ref.x !== undefined) {
+      const at = place(ref.x);
+      if (at === null) {
+        console.warn(`reference x ${JSON.stringify(ref.x)} is not on this chart's x axis`);
+        continue;
+      }
+      const text = label ?? (isTemporal ? formatValue(ref.x, "date") : String(typeof at === "number" ? ref.x : at));
+      lines.push({
+        [categoryKey]: at,
+        lineStyle,
+        label: referenceLabel(color, surface, horizontal ? "insideEndTop" : "end", text, width),
+      });
+    } else {
+      const y = finiteNumber(ref.y);
+      if (y === null) continue;
+      values.push(y);
+      const shown = referenceValue(y, fmt);
+      valueLines.push(y);
+      lines.push({
+        [valueKey]: y,
+        lineStyle,
+        label: referenceLabel(
+          color,
+          surface,
+          horizontal ? "end" : "insideEndTop",
+          label ? (narrow ? label : `${label}  ${shown}`) : shown,
+          width
+        ),
+      });
+    }
+  }
+  if (values.length) reachValueAxis(option[valueKey], values);
+  liftCrowdedBandLabels(bandLabels, valueLines, option.series, values, height);
+  const labelsAbove = lines.some((line) => line.label.position === "end");
+  if (labelsAbove && option.legend.show) option.grid.top += 18;
+  if (isTemporal && times.length) reachTimeAxis(option[categoryKey], times);
+  if (option.legend.show) option.legend.data = option.series.map((s) => s.name);
+  const carrier = { type: "line", data: [], silent: true, animation: false, tooltip: { show: false } };
+  if (bands.length) {
+    option.series.push({
+      ...carrier,
+      name: "__reference_bands",
+      z: 1,
+      markArea: {
+        silent: true,
+        data: bands.map((band) => [
+          { ...band.from, itemStyle: { color: band.color, opacity: 0.08 }, label: { show: false } },
+          band.to,
+        ]),
+      },
+    });
+  }
+  const labelled = bands.filter((band) => band.text);
+  if (lines.length || labelled.length) {
+    option.series.push({
+      ...carrier,
+      name: "__reference_lines",
+      z: 5,
+      markArea: labelled.length
+        ? {
+            silent: true,
+            z: 5,
+            data: labelled.map((band) => [
+              {
+                ...band.from,
+                itemStyle: { color: "transparent" },
+                label: referenceLabel(band.color, surface, band.position, band.text, width),
+              },
+              band.to,
+            ]),
+          }
+        : undefined,
+      markLine: lines.length
+        ? { silent: true, symbol: ["none", "none"], animation: false, data: lines }
+        : undefined,
+    });
+  }
 }
 
 export function pieTooltip(fmt) {

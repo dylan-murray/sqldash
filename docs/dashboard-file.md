@@ -54,6 +54,57 @@ take static `options:` or `options_sql:`.
 `line`, `bar`, `area`, `scatter`, `pie`, `big_number`, `table`, plus markdown tiles
 (just a `markdown:` key).
 
+## Reference lines
+
+`references:` draws targets, thresholds and markers over a `line`, `bar`, `area` or
+`scatter` chart. Each entry takes exactly one position:
+
+```yaml
+chart:
+  type: bar
+  format: currency
+  references:
+    - {y: 150000, label: Goal}                        # a line at a value
+    - {y: [40000, 60000], label: Healthy range}       # a band between two values
+    - {x: 2026-09-01, label: Pricing change}          # a marker at a date or category
+    - {x: [2026-08-10, 2026-08-24], label: Promo}     # a span across the x axis
+    - {metric: avg_order_value, label: Average}       # a line at a scalar metric
+```
+
+`y` is always the value axis and `x` the category or time axis, so a horizontal bar
+chart draws `y` references as vertical lines. A `metric` reference runs that metric
+with no dimensions under the dashboard's current filters, the way a big number would,
+so the line moves when the date range or a select filter changes. It takes the bare
+metric name, as a tile's `metric:` does. A metric the dashboard also shows as a big
+number is queried once for both. If the warehouse refuses a metric reference, the chart
+draws the rest and a note at the bottom of the tile names the reference and the error.
+
+Optional keys on every entry:
+
+| Key | Values | Default |
+|---|---|---|
+| `label` | text shown beside the line | the value, or the metric's name |
+| `color` | `ink`, `muted`, `accent`, `good`, `bad`, `series-1` to `series-8` | `ink` |
+| `style` | `dashed`, `solid`, `dotted` (lines and markers) | `dashed` |
+| `format` | any format name or currency code | the chart's value format, or the metric's |
+
+Colors are theme tokens rather than hex values, so a reference reads the same in the
+light and dark themes and under a custom theme. Lines are drawn thin and dashed with
+no points, and they never enter the legend or the tooltip, so a target does not read
+as another observed series.
+
+A value past the data widens the axis to fit it, so a goal the series has not reached
+yet is still on the chart. A category marker that the result does not contain is left
+off rather than drawn in the wrong place. It matches a category exactly, except that
+a date finds its day on a timestamp column a bar chart draws as categories. A number
+marks the category with that value, not the position. On a narrow tile a line keeps
+its label and drops the number beside it. `sqldash lint` rejects references on `pie`, `big_number` and `table` tiles,
+a metric that does not exist, a trailing-window metric on a dashboard with a date range
+(a window is one value as of a day, not a value over a range), a band that is not a
+pair, and an entry with no position or more than one. The chart builder has the same
+controls under References, and switching to a chart type without axes sets the
+references aside until you switch back.
+
 ## Relative dates
 
 `-30d` is the same as `last_30_days`. `mtd` and `ytd` are accepted everywhere a date

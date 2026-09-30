@@ -1,10 +1,12 @@
+from datetime import date
 from pathlib import Path
 
 import pytest
 
 from sqldash.connectors.base import ConnectorError, TableInfo
 from sqldash.connectors.engine import EngineConnector
-from sqldash.lint import lint_project
+from sqldash.execution import ExecutionRegistry
+from sqldash.lint import lint_project, validate_dashboard
 from sqldash.models.results import QueryResult
 from sqldash.project.store import DashboardStore
 from sqldash.scaffold import create_demo
@@ -2000,3 +2002,215 @@ def test_strict_lint_case_fold_hint_needs_the_dimension_unresolved(
     assert len(errors) == 1, errors
     assert errors[0].startswith("metric 'lc_trend': SQL fails against the source: ")
     assert ("time_dimension 'order_date_lc' has no expr" in errors[0]) is hinted
+
+
+def test_references_validate_their_shape():
+    from pydantic import ValidationError
+
+    from sqldash.models.chart import ChartSpec
+
+    spec = ChartSpec.model_validate(
+        {
+            "type": "line",
+            "references": [
+                {"y": 5000, "label": "Target"},
+                {"x": date(2026, 9, 1)},
+                {"y": [-2000, 2000]},
+                {"metric": "revenue"},
+            ],
+        }
+    )
+    assert spec.references[1].x == "2026-09-01"
+    assert spec.references[2].y == [-2000.0, 2000.0]
+    for bad, needle in [
+        ({"y": 1, "x": "a"}, "exactly one of"),
+        ({"label": "nothing"}, "exactly one of"),
+        ({"y": [1]}, "two values"),
+        ({"y": "lots"}, "valid number"),
+        ({"y": float("inf")}, "finite"),
+        ({"x": float("nan")}, "reference 'x' must be a finite number"),
+        ({"x": [1, float("inf")]}, "reference 'x' must be a finite number"),
+        ({"metric": "sales/revenue"}, "reference metric 'sales/revenue' must match"),
+        ({"y": 1, "color": "red"}, "series-8"),
+        ({"y": 1, "style": "wavy"}, "dotted"),
+        ({"y": 1, "format": "furlongs"}, "is not valid"),
+        ({"y": 1, "axis": "right"}, "Extra inputs"),
+    ]:
+        with pytest.raises(ValidationError, match=needle):
+            ChartSpec.model_validate({"type": "line", "references": [bad]})
+
+
+def test_lint_rejects_references_on_charts_without_axes(tmp_path):
+    (tmp_path / "d.yaml").write_text(
+        "title: D\n"
+        "source: {type: duckdb, database: ':memory:'}\n"
+        "tiles:\n"
+        "  - {title: P, chart: {type: pie, references: [{y: 1}]}, sql: 'SELECT 1 AS n'}\n"
+        "  - {title: N, chart: {type: big_number, references: [{y: 1}]}, sql: 'SELECT 1 AS n'}\n"
+        "  - {title: L, chart: {type: line, references: [{y: 1}]}, sql: 'SELECT 1 AS n'}\n"
+    )
+    errors = [f.message for f in lint(tmp_path) if f.level == "error"]
+    assert any("tile 'p'" in m and "references draw on line, bar" in m for m in errors), errors
+    assert any("tile 'n'" in m and "not big_number" in m for m in errors), errors
+    assert not any("tile 'l'" in m for m in errors), errors
+
+
+def test_lint_rejects_a_reference_to_an_unknown_metric(tmp_path):
+    create_demo(tmp_path)
+    (tmp_path / ".sqldash" / "refs.yaml").write_text(
+        "title: R\n"
+        "source: {type: duckdb, attach_files: true}\n"
+        "tiles:\n"
+        "  - title: T\n"
+        "    sql: SELECT 1 AS a, 2 AS b\n"
+        "    chart:\n"
+        "      type: bar\n"
+        "      references: [{metric: revenue}, {metric: revnue}]\n"
+    )
+    errors = [f.message for f in lint(tmp_path) if f.level == "error"]
+    assert any("reference 2 names unknown metric 'revnue'" in m for m in errors), errors
+    assert not any("'revenue'" in m and "unknown" in m for m in errors), errors
+
+
+def test_a_metric_reference_counts_as_using_the_date_filter(tmp_path):
+    create_demo(tmp_path)
+    (tmp_path / ".sqldash" / "refs.yaml").write_text(
+        "title: R\n"
+        "source: {type: duckdb, attach_files: true}\n"
+        "filters:\n"
+        "  - {name: dates, type: daterange, default: last_60_days}\n"
+        "tiles:\n"
+        "  - title: T\n"
+        "    sql: SELECT category, SUM(amount) AS revenue FROM orders GROUP BY 1\n"
+        "    chart: {type: bar, references: [{metric: revenue}]}\n"
+    )
+    findings = [f.message for f in lint(tmp_path)]
+    assert not any("filter 'dates' is not used" in m for m in findings), findings
+
+
+@pytest.mark.parametrize("dated", [True, False])
+def test_a_trailing_window_reference_is_rejected_under_a_date_range(tmp_path, dated):
+    create_demo(tmp_path)
+    metrics = tmp_path / ".sqldash" / "metrics.yaml"
+    metrics.write_text(
+        metrics.read_text() + "\n  trailing_revenue:\n    relation: orders\n    expr: SUM(amount)\n"
+        "    window: 28 days\n    time_dimension: {name: order_date, grain: day}\n"
+    )
+    filters = "filters:\n  - {name: dates, type: daterange, default: last_60_days}\n"
+    (tmp_path / ".sqldash" / "refs.yaml").write_text(
+        "title: R\nsource: {type: duckdb, attach_files: true}\n"
+        + (filters if dated else "")
+        + "tiles:\n"
+        "  - title: T\n"
+        "    sql: SELECT category, SUM(amount) AS revenue FROM orders GROUP BY 1\n"
+        "    chart: {type: bar, references: [{metric: trailing_revenue}]}\n"
+    )
+    errors = [f.message for f in lint(tmp_path) if f.level == "error"]
+    rejected = [m for m in errors if "a trailing 28 days window" in m]
+    assert bool(rejected) is dated, errors
+
+
+_BROKEN_TARGET = (
+    "source: {type: duckdb, database: ':memory:'}\n"
+    'relations:\n  orders: {sql: "SELECT 1 AS amount"}\n'
+    "metrics:\n"
+    "  target: {relation: orders, expr: SUM(missing_column)}\n"
+    "  revenue: {relation: orders, expr: SUM(amount)}\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("tiles", "failing"),
+    [
+        (
+            [
+                "{title: T, sql: 'SELECT 1 AS a, 2 AS b', chart: {type: bar, references: "
+                "[{metric: target}]}}"
+            ],
+            1,
+        ),
+        (
+            [
+                "{title: T, sql: 'SELECT 1 AS a, 2 AS b', chart: {type: bar, references: "
+                "[{metric: revenue}]}}"
+            ],
+            0,
+        ),
+        (
+            [
+                "{title: N, metric: target}",
+                "{title: T, sql: 'SELECT 1 AS a, 2 AS b', chart: {type: bar, references: "
+                "[{metric: target}]}}",
+            ],
+            1,
+        ),
+    ],
+    ids=["reference-only", "valid", "shared-with-a-tile"],
+)
+def test_validate_dashboard_probes_metrics_used_as_references(tmp_path, tiles, failing):
+    payload = _validate_metric_tile(tmp_path, _BROKEN_TARGET, "\n  - ".join(tiles))
+    assert payload["sql_checked"], payload
+    missing = [e for e in payload["errors"] if "missing_column" in e]
+    assert len(missing) == failing, payload["errors"]
+    assert payload["valid"] is (failing == 0), payload
+
+
+def _validate_text(tmp_path, text: str, metrics_yaml: str | None = None) -> dict:
+    if metrics_yaml is not None:
+        (tmp_path / "metrics.yaml").write_text(metrics_yaml)
+    store = DashboardStore(tmp_path)
+    registry = ExecutionRegistry(max_workers=1)
+    try:
+        return validate_dashboard(
+            text, store=store, layer=SemanticLayer(store), registry=registry, check_sql=True
+        )
+    finally:
+        registry.shutdown()
+
+
+_REFERENCE_TILE = (
+    "tiles:\n"
+    "  - title: T\n"
+    "    sql: SELECT 1 AS a, 2 AS b\n"
+    "    chart: {type: bar, references: [{metric: target}]}\n"
+)
+
+
+def test_an_inline_reference_metric_is_probed_without_its_dimensions(tmp_path):
+    text = (
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        "metrics:\n"
+        "  target:\n"
+        "    sql: SELECT 1 AS amount, 2 AS region\n"
+        "    expr: SUM(amount) + region\n"
+        "    dimensions: [{name: region}]\n" + _REFERENCE_TILE
+    )
+    payload = _validate_text(tmp_path, text)
+    assert payload["valid"] is False, payload
+    assert any(
+        e.startswith("tile 't': reference 1 metric 'target' fails against the source")
+        and "region" in e
+        for e in payload["errors"]
+    ), payload["errors"]
+
+
+def test_a_reference_metric_is_probed_under_the_dashboard_filters(tmp_path):
+    metrics = (
+        "source: {type: duckdb, database: ':memory:'}\n"
+        'relations:\n  orders: {sql: "SELECT 1 AS amount"}\n'
+        "metrics:\n"
+        "  target:\n"
+        "    relation: orders\n"
+        "    expr: SUM(amount)\n"
+        "    dimensions: [{name: region, expr: missing_region}]\n"
+    )
+    filtered = (
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        "filters:\n  - {name: region, type: select, options: [us, eu], default: us}\n"
+        + _REFERENCE_TILE
+    )
+    payload = _validate_text(tmp_path, filtered, metrics)
+    assert any("missing_region" in e for e in payload["errors"]), payload
+    unfiltered = "title: D\nsource: {type: duckdb, database: ':memory:'}\n" + _REFERENCE_TILE
+    payload = _validate_text(tmp_path, unfiltered, metrics)
+    assert not any("missing_region" in e for e in payload["errors"]), payload

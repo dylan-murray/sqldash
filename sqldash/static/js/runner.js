@@ -1,5 +1,6 @@
 import { apiToken as readApiToken } from "/static/js/token.js";
 import {
+  chartNumber,
   cssVar,
   escapeHtml,
   inferSpec,
@@ -30,6 +31,7 @@ export const charts = new Map();
 export const tileResults = new Map();
 export const tilePrevResults = new Map();
 export const tileExecutions = new Map();
+export const tileReferenceValues = new Map();
 
 let etag = data.etag;
 export const getEtag = () => etag;
@@ -129,7 +131,15 @@ export function disposeTile(tileId) {
 // hardest if missed: left under the old id it is now *another* tile's id, and the
 // shared source-banner counts it against a tile that is fine.
 function tileStateMaps() {
-  return [charts, tileResults, tilePrevResults, tileExecutions, tileHueSlots, runErrors];
+  return [
+    charts,
+    tileResults,
+    tilePrevResults,
+    tileExecutions,
+    tileHueSlots,
+    runErrors,
+    tileReferenceValues,
+  ];
 }
 
 export function renameTile(oldId, newId) {
@@ -157,7 +167,8 @@ export function defaultChartSpec(tile) {
 
 export function renderTile(el, tile, result, previous = null) {
   const body = el.querySelector(".tile-body");
-  let spec = tile.chart ?? defaultChartSpec(tile);
+  const referenceRun = tileReferenceValues.get(tile.id);
+  let spec = withReferenceValues(tile.chart ?? defaultChartSpec(tile), referenceRun?.values);
   tileResults.set(tile.id, result);
   setStatus(body, null);
   const csvBtn = el.querySelector('[data-action="csv"]');
@@ -209,7 +220,7 @@ export function renderTile(el, tile, result, previous = null) {
   }
   const slot = tileHueSlots.get(tile.id);
   const forced = slot && slot !== 1 ? cssVar(`--series-${slot}`) : undefined;
-  const option = styleCompareSeries(translate(spec, result, forced, mount.clientHeight));
+  const option = styleCompareSeries(translate(spec, result, forced, mount.clientHeight, mount.clientWidth));
   chart.setOption(option, { notMerge: true });
   markEmptyChart(body, option);
   attachCrossFilter(chart, spec, result);
@@ -217,8 +228,76 @@ export function renderTile(el, tile, result, previous = null) {
   // a line that stops early reads as the data ending rather than the row cap.
   // Same note renderTable uses, so the two agree about the same result.
   markTruncated(body, result);
+  noteReferenceErrors(body, referenceRun?.errors);
 }
 
+/* A reference the warehouse refused is left off the chart, so the tile says
+   which one and why, in the same strip a truncation note uses. */
+function noteReferenceErrors(body, errors) {
+  if (!errors?.length) return;
+  let note = body.querySelector(":scope > .truncated-note");
+  if (!note) {
+    note = document.createElement("div");
+    note.className = "truncated-note";
+    body.appendChild(note);
+  }
+  body.classList.add("has-truncation");
+  note.classList.add("reference-note");
+  note.textContent = [note.textContent, ...errors].filter(Boolean).join(" · ");
+  note.title = note.textContent;
+}
+
+
+/* Keyed by metric name, and `__proto__` is a valid one: read own entries only. */
+const ownEntry = (map, key) => (map != null && Object.hasOwn(map, key) ? map[key] : undefined);
+
+function withReferenceValues(spec, values) {
+  if (!spec.references?.some((ref) => ref?.metric)) return spec;
+  const references = spec.references.map((ref) =>
+    ref?.metric
+      ? {
+          ...ref,
+          y: ownEntry(values, ref.metric) ?? null,
+          format: ref.format || ownEntry(dashboard.metric_formats, ref.metric) || null,
+        }
+      : ref
+  );
+  return { ...spec, references };
+}
+
+/* A metric reference is a scalar run of that metric under the same filter
+   values as the tile, so a target moves with the dashboard's date range and
+   region the way a big number would. It shares `pending` with the tiles, so a
+   reference to a metric a big number already shows costs no second query. A
+   failed reference drops out of the chart instead of failing the tile, and
+   its error comes back to be shown on the tile. */
+function metricReferenceValues(tile, values, pending) {
+  const names = [...new Set((tile.chart?.references ?? []).filter((r) => r?.metric).map((r) => r.metric))];
+  if (!names.length) return Promise.resolve(null);
+  return Promise.all(
+    names.map((name) => {
+      const body = { metric: name, dimensions: [], grain: null, params: values };
+      const key = JSON.stringify(body);
+      if (!pending.has(key)) {
+        pending.set(
+          key,
+          submitRun(body).then(async (id) => ({ id, result: await pollExecution(id) }))
+        );
+      }
+      return pending.get(key).then(
+        ({ result }) => {
+          const col = result.columns.findIndex((c) => ["integer", "float", "decimal"].includes(c.type));
+          const value = col < 0 ? null : chartNumber(result.rows[0]?.[col] ?? null);
+          return [name, typeof value === "number" ? value : null];
+        },
+        (err) => [name, null, `reference '${name}' is not drawn: ${err.message}`]
+      );
+    })
+  ).then((runs) => ({
+    values: Object.fromEntries(runs.map(([name, value]) => [name, value])),
+    errors: runs.map((run) => run[2]).filter(Boolean),
+  }));
+}
 
 function daterangeBinds() {
   const filter = dashboard.filters.find((f) => f.type === "daterange");
@@ -462,9 +541,11 @@ export async function runTiles(tiles) {
     const settled = compareError
       ? Promise.reject(new Error(compareError))
       : currentThenPrevious(pending.get(key), comparePromise);
-    settled
-      .then(([{ id, result }, previous]) => {
+    const references = metricReferenceValues(tile, values, pending);
+    Promise.all([settled, references])
+      .then(([[{ id, result }, previous], referenceValues]) => {
         if (current()) {
+          tileReferenceValues.set(tile.id, referenceValues);
           tileExecutions.set(tile.id, id);
           clearRunError(tile.id);
           renderTile(el, tile, result, previous);
@@ -485,7 +566,9 @@ export async function runTiles(tiles) {
 
 function clearRenderedTile(el, tileId) {
   charts.get(tileId)?.dispose();
-  for (const map of [charts, tileResults, tilePrevResults, tileExecutions]) map.delete(tileId);
+  for (const map of [charts, tileResults, tilePrevResults, tileExecutions, tileReferenceValues]) {
+    map.delete(tileId);
+  }
   const csvBtn = el.querySelector('[data-action="csv"]');
   if (csvBtn) csvBtn.hidden = true;
   const body = el.querySelector(".tile-body");
@@ -495,7 +578,7 @@ function clearRenderedTile(el, tileId) {
 
 export function tilesUsingParam(name) {
   return dashboard.tiles.filter((w) => {
-    if (w.metric) return true;
+    if (w.metric || w.chart?.references?.some((ref) => ref?.metric)) return true;
     const sql = w.query ? dashboard.queries[w.query] ?? "" : "";
     return paramNamesIn(sql).includes(name);
   });

@@ -5,12 +5,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from sqldash.models.chart import validate_format
+from sqldash.models.chart import validate_format, validate_identifier
 from sqldash.models.source import SourceConfig
 
 Grain = Literal["hour", "day", "week", "month", "quarter", "year"]
 
-IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _RESERVED_WORDS = """
 all analyse analyze and any anti array as asc asof asymmetric at authorization between binary
 both by case cast check collate collation column constraint create cross current
@@ -54,13 +53,6 @@ def parse_window(value: str) -> tuple[int, str]:
     if unit is None:
         raise ValueError(f"window unit '{match[2]}' must be one of hours, days, weeks, months")
     return count, unit
-
-
-def validate_identifier(value: str, label: str) -> str:
-    """Require a SQL-safe identifier; the compiler relies on names never being fragments."""
-    if not IDENTIFIER.match(value):
-        raise ValueError(f"{label} '{value}' must match [A-Za-z_][A-Za-z0-9_]*")
-    return value
 
 
 def validate_name(value: str, label: str, *, column: bool = False) -> str:

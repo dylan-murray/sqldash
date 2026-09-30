@@ -142,6 +142,43 @@ body.editing .tile-actions { opacity: 1; }
 .field-inline .check { display: block; font-size: 13px; color: var(--ink-1); }
 .field-inline .check input { accent-color: var(--accent); margin-right: 6px; }
 
+.field-refs { flex: 1 0 100%; min-width: 0; }
+.ref-list { display: flex; flex-direction: column; gap: 8px; }
+.ref-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 8px 8px 11px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--ref-color, var(--ink-2));
+  border-radius: var(--radius-sm);
+}
+.ref-head, .ref-body { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.ref-head > .dd:first-child { flex: 1 1 auto; }
+.ref-head .dd, .ref-body .dd { min-width: 0; }
+.ref-head .dd-btn, .ref-body .dd-btn { width: 100%; justify-content: space-between; padding: 0 12px; }
+.ref-body > * { flex: 1 1 0; min-width: 0; }
+.ref-body input {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink-1);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  box-shadow: var(--shadow-1);
+  height: 34px;
+  padding: 0 14px;
+  min-width: 0;
+  width: 100%;
+}
+.ref-body input:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
+.ref-row .hint { font-size: 11.5px; color: var(--ink-muted); text-transform: none; letter-spacing: 0; }
+.ref-remove { flex: none; width: 28px; height: 28px; padding: 0; font-size: 16px; line-height: 1; color: var(--ink-muted); }
+.ref-remove:hover { color: var(--danger); }
+.ref-add { align-self: flex-start; font-size: 12.5px; }
+.ref-parked { font-size: 12px; color: var(--ink-muted); text-transform: none; letter-spacing: 0; }
+
 .dw-sql {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);

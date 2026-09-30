@@ -7189,3 +7189,239 @@ def test_non_finite_floats_json_and_binary_render_as_the_warehouse_returned_them
         assert tab.locator(".tile-status .err").count() == 0
     finally:
         _stop_server(server, thread, tab)
+
+
+_REFERENCES_DASHBOARD = """\
+title: R
+source: {type: duckdb, attach_files: true}
+filters:
+  - {name: dates, type: daterange, default: last_60_days}
+tiles:
+  - {title: Total, metric: revenue}
+  - title: By category
+    chart:
+      type: bar
+      format: currency
+      references:
+        - {metric: revenue, label: All revenue}
+        - {y: 900000000, label: Moonshot}
+        - {x: garden}
+    sql: |
+      SELECT category, SUM(amount) AS revenue FROM orders
+      WHERE order_date BETWEEN {{ dates_start }} AND {{ dates_end }} GROUP BY 1
+"""
+
+
+def _reference_state(page, tile_id):
+    return page.evaluate(
+        """(id) => {
+          const mount = document.querySelector(`.tile[data-tile-id="${id}"] .chart-mount`);
+          const option = echarts.getInstanceByDom(mount).getOption();
+          const lines = option.series.find((s) => s.name === '__reference_lines');
+          const axis = echarts.getInstanceByDom(mount).getModel().getComponent('yAxis').axis;
+          return {
+            lines: (lines?.markLine?.data ?? [])
+              .map((d) => ({y: d.yAxis, text: d.label.formatter})),
+            legend: option.legend[0].data ?? null,
+            axisMax: axis.scale.getExtent()[1],
+          };
+        }""",
+        tile_id,
+    )
+
+
+def test_reference_lines_draw_a_metric_value_and_reach_past_the_data(page, tmp_path_factory):
+    root = tmp_path_factory.mktemp("references")
+    create_demo(root)
+    (root / ".sqldash" / "r.yaml").write_text(_REFERENCES_DASHBOARD)
+    app = create_app(root, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    runs = []
+
+    def note_run(request):
+        if request.method == "POST" and request.url.endswith("/api/run"):
+            runs.append(json.loads(request.post_data))
+
+    page.on("request", note_run)
+    try:
+        page.goto(f"http://127.0.0.1:{port}/d/r", wait_until="load")
+        _wait_tiles(page)
+        page.wait_for_function(
+            """() => {
+              const m = document.querySelector('.tile[data-tile-id="by_category"] .chart-mount');
+              return m && echarts.getInstanceByDom(m);
+            }"""
+        )
+        state = _reference_state(page, "by_category")
+        total = page.locator('.tile[data-tile-id="total"] .big-number .value').inner_text()
+        metric_line = next(
+            line for line in state["lines"] if line["text"].startswith("All revenue")
+        )
+        assert metric_line["text"] == f"All revenue  {total}", (state, total)
+        assert any(line["y"] == 900000000 for line in state["lines"]), state
+        assert state["axisMax"] >= 900000000, state
+        assert len(state["lines"]) == 2, state
+        metric_runs = [r for r in runs if r.get("metric") == "revenue"]
+        assert len(metric_runs) == 1, runs
+    finally:
+        page.remove_listener("request", note_run)
+        _stop_server(server, thread, page)
+
+
+def test_a_metric_reference_follows_the_filters_on_an_unfiltered_query(page, tmp_path_factory):
+    root = tmp_path_factory.mktemp("staleref")
+    create_demo(root)
+    (root / ".sqldash" / "r.yaml").write_text(
+        "title: R\n"
+        "source: {type: duckdb, attach_files: true}\n"
+        "filters:\n"
+        "  - {name: dates, type: daterange, default: last_60_days}\n"
+        "tiles:\n"
+        "  - title: All time\n"
+        "    chart: {type: bar, references: [{metric: revenue, label: In range}]}\n"
+        "    sql: SELECT category, SUM(amount) AS revenue FROM orders GROUP BY 1\n"
+    )
+    app = create_app(root, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    try:
+        page.goto(f"http://127.0.0.1:{port}/d/r", wait_until="load")
+        _wait_tiles(page)
+        read = """() => {
+          const m = document.querySelector('.tile[data-tile-id="all_time"] .chart-mount');
+          const chart = m && echarts.getInstanceByDom(m);
+          const refs = chart?.getOption().series.find((s) => s.name === '__reference_lines');
+          return refs ? refs.markLine.data[0].label.formatter : null;
+        }"""
+        page.wait_for_function(read)
+        before = page.evaluate(read)
+        page.evaluate(
+            """() => {
+              const start = document.querySelector('[data-filter="dates_start"]');
+              const end = new Date(document.querySelector('[data-filter="dates_end"]').value);
+              start.value = new Date(end - 14 * 86400000).toISOString().slice(0, 10);
+              start.dispatchEvent(new Event('change', {bubbles: true}));
+            }"""
+        )
+        page.wait_for_function(
+            f"() => {{ const now = ({read})(); return now && now !== {json.dumps(before)}; }}"
+        )
+        assert page.evaluate(read).startswith("In range  "), page.evaluate(read)
+    finally:
+        _stop_server(server, thread, page)
+
+
+def test_chart_builder_adds_a_reference_and_saves_it(page, tmp_path_factory):
+    root = tmp_path_factory.mktemp("builderrefs")
+    (root / "d.yaml").write_text(
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        "tiles:\n"
+        "  - title: T\n"
+        "    chart: {type: bar, x: c, y: [n]}\n"
+        "    sql: \"SELECT c, n FROM (VALUES ('a', 1), ('b', 3)) t(c, n)\"\n"
+    )
+    app = create_app(root, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    try:
+        page.goto(f"http://127.0.0.1:{port}/d/d/query?tile=t", wait_until="load")
+        page.click("#run-btn")
+        page.wait_for_selector("#qb-preview canvas")
+        page.locator(".ref-add").click()
+        page.locator('.ref-row input[aria-label="Reference value"]').fill("10")
+        page.locator('.ref-row input[aria-label="Reference label"]').fill("Target")
+        page.locator(".ref-add").click()
+        preview = page.evaluate(
+            """() => {
+              const mount = document.querySelector('#qb-preview .chart-mount');
+              const chart = echarts.getInstanceByDom(mount);
+              const refs = chart.getOption().series.find((s) => s.name === '__reference_lines');
+              return refs.markLine.data.map((d) => d.label.formatter);
+            }"""
+        )
+        assert preview == ["Target  10"], preview
+        page.locator("#qb-type .seg-btn", has_text="Pie").click()
+        assert "set aside" in page.locator(".ref-parked").inner_text()
+        page.locator("#qb-type .seg-btn", has_text="Line").click()
+        assert page.locator(".ref-row").count() == 2
+        page.click("#qb-add")
+        page.wait_for_url("**/d/d?edit=1")
+        text = (root / "d.yaml").read_text()
+        assert (
+            "    chart: {type: line, x: c, y: [n], references: [{y: 10, label: Target}]}\n" in text
+        ), text
+    finally:
+        _stop_server(server, thread, page)
+
+
+def test_a_reference_the_warehouse_refuses_is_named_on_the_tile(page, tmp_path_factory):
+    root = tmp_path_factory.mktemp("refusedref")
+    create_demo(root)
+    metrics = root / ".sqldash" / "metrics.yaml"
+    metrics.write_text(
+        metrics.read_text() + "\n  trailing_revenue:\n    relation: orders\n    expr: SUM(amount)\n"
+        "    window: 28 days\n    time_dimension: {name: order_date, grain: day}\n"
+    )
+    (root / ".sqldash" / "r.yaml").write_text(
+        "title: R\n"
+        "source: {type: duckdb, attach_files: true}\n"
+        "filters:\n"
+        "  - {name: dates, type: daterange, default: last_60_days}\n"
+        "tiles:\n"
+        "  - title: Bars\n"
+        "    chart: {type: bar, references: [{metric: trailing_revenue}, {y: 5, label: Five}]}\n"
+        "    sql: SELECT category, SUM(amount) AS revenue FROM orders GROUP BY 1\n"
+    )
+    app = create_app(root, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    try:
+        page.goto(f"http://127.0.0.1:{port}/d/r", wait_until="load")
+        _wait_tiles(page)
+        note = page.locator('.tile[data-tile-id="bars"] .reference-note')
+        note.wait_for()
+        assert "reference 'trailing_revenue' is not drawn" in note.inner_text()
+        assert "omit start" in note.inner_text()
+        lines = page.evaluate(
+            """() => {
+              const m = document.querySelector('.tile[data-tile-id="bars"] .chart-mount');
+              const refs = echarts.getInstanceByDom(m).getOption().series
+                .find((s) => s.name === '__reference_lines');
+              return refs.markLine.data.map((d) => d.label.formatter);
+            }"""
+        )
+        assert lines == ["Five  5"], lines
+    finally:
+        _stop_server(server, thread, page)
+
+
+def test_a_reference_to_a_metric_named_proto_uses_the_chart_format(page, tmp_path_factory):
+    root = tmp_path_factory.mktemp("protoref")
+    create_demo(root)
+    metrics = root / ".sqldash" / "metrics.yaml"
+    metrics.write_text(
+        metrics.read_text() + "\n  __proto__:\n    relation: orders\n    expr: SUM(amount)\n"
+    )
+    (root / ".sqldash" / "r.yaml").write_text(
+        "title: R\n"
+        "source: {type: duckdb, attach_files: true}\n"
+        "tiles:\n"
+        "  - title: Bars\n"
+        "    chart:\n"
+        "      type: bar\n"
+        "      format: currency\n"
+        "      references: [{metric: __proto__, label: All}]\n"
+        "    sql: SELECT category, SUM(amount) AS revenue FROM orders GROUP BY 1\n"
+    )
+    app = create_app(root, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    try:
+        page.goto(f"http://127.0.0.1:{port}/d/r", wait_until="load")
+        _wait_tiles(page)
+        read = """() => {
+          const m = document.querySelector('.tile[data-tile-id="bars"] .chart-mount');
+          const chart = m && echarts.getInstanceByDom(m);
+          const refs = chart?.getOption().series.find((s) => s.name === '__reference_lines');
+          return refs ? refs.markLine.data[0].label.formatter : null;
+        }"""
+        page.wait_for_function(read)
+        assert page.evaluate(read).startswith("All  $"), page.evaluate(read)
+    finally:
+        _stop_server(server, thread, page)

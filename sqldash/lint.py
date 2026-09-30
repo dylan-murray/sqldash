@@ -27,6 +27,7 @@ from sqldash.connectors.engine import paramstyle_for
 from sqldash.connectors.engine_urls import DRIVERS, INSTALL_EXTRAS
 from sqldash.execution import ExecutionRegistry
 from sqldash.models.agents import ToolParam
+from sqldash.models.chart import REFERENCE_CHART_TYPES
 from sqldash.models.dashboard import split_page_tokens
 from sqldash.models.source import is_secret_bag_key
 from sqldash.params import (
@@ -750,6 +751,66 @@ def _lint_query_writes(dashboard, file: str) -> list[Finding]:
     return findings
 
 
+def _reference_findings(
+    tile, file: str, available: dict, dashboard, project_metrics: dict
+) -> list[Finding]:
+    """References draw over an x/y plot, and a metric reference needs a metric
+    the dashboard can run."""
+    if tile.chart is None or not tile.chart.references:
+        return []
+    if tile.chart.type not in REFERENCE_CHART_TYPES:
+        return [
+            Finding(
+                file,
+                "error",
+                f"tile '{tile.id}': references draw on {', '.join(REFERENCE_CHART_TYPES)} "
+                f"charts, not {tile.chart.type}. Remove them or pick one of those types",
+            )
+        ]
+    findings: list[Finding] = []
+    dated = any(f.type == "daterange" for f in dashboard.filters)
+    for n, ref in enumerate(tile.chart.references, start=1):
+        if ref.metric is None:
+            continue
+        if ref.metric not in available:
+            options = ", ".join(sorted(available)) or "(none defined)"
+            findings.append(
+                Finding(
+                    file,
+                    "error",
+                    f"tile '{tile.id}': reference {n} names unknown metric '{ref.metric}'. "
+                    f"Available: {options}",
+                )
+            )
+            continue
+        definition = dashboard.metrics.get(ref.metric) or project_metrics[ref.metric].definition
+        if dated and definition.window:
+            findings.append(
+                Finding(
+                    file,
+                    "error",
+                    f"tile '{tile.id}': reference {n} names '{ref.metric}', a trailing "
+                    f"{definition.window} window, which is one value as of a day and not "
+                    "a value over the dashboard's date range, so it cannot run under that "
+                    "filter. Reference a metric without a window, or chart this one on its "
+                    "own metric tile with a grain",
+                )
+            )
+    return findings
+
+
+def _note_metric_use(usage: _TileUsage, dashboard, project_metrics: dict, name: str):
+    """A metric tile or a metric reference runs with the filter bar's values, so
+    its dimensions and time dimension are what make those filters used."""
+    usage.has_metric_tiles = True
+    definition = dashboard.metrics.get(name) or project_metrics[name].definition
+    declared = {d.name for d in definition.dimensions}
+    usage.metric_dimensions.update(declared)
+    if definition.time_dimension is not None:
+        usage.any_metric_with_time = True
+    return definition, declared
+
+
 def _lint_tiles(
     dashboard, file: str, available: dict, project_metrics: dict
 ) -> tuple[list[Finding], _TileUsage]:
@@ -778,6 +839,10 @@ def _lint_tiles(
                     f"not {tile.chart.type}",
                 )
             )
+        findings.extend(_reference_findings(tile, file, available, dashboard, project_metrics))
+        for ref in tile.chart.references if tile.chart else []:
+            if ref.metric in available:
+                _note_metric_use(usage, dashboard, project_metrics, ref.metric)
         if tile.query:
             usage.queries.add(tile.query)
         if tile.metric is None:
@@ -795,11 +860,7 @@ def _lint_tiles(
                 )
             )
             continue
-        definition = dashboard.metrics.get(metric_name) or project_metrics[metric_name].definition
-        declared = {d.name for d in definition.dimensions}
-        usage.metric_dimensions.update(declared)
-        if definition.time_dimension is not None:
-            usage.any_metric_with_time = True
+        definition, declared = _note_metric_use(usage, dashboard, project_metrics, metric_name)
         findings.extend(_lint_metric_tile(file, tile, metric_name, definition, declared, dashboard))
     return findings, usage
 
@@ -1390,6 +1451,24 @@ def _metric_schema_findings(metrics, relations, tables, probed) -> list[str]:
     return findings
 
 
+def _inline_resolved(name: str, metrics, relations, source, base_dir) -> ResolvedMetric:
+    """A metric from candidate YAML, resolved the way the layer would once it is
+    on disk: any derived expr expanded and its relation found."""
+    definition = metrics[name]
+    if definition.derived is not None:
+        definition, relation = expand_derived(name, definition, metrics, relations)
+    else:
+        relation = resolve_relation(definition, relations)
+    return ResolvedMetric(
+        name=name,
+        definition=definition,
+        source=source,
+        base_dir=base_dir if isinstance(base_dir, Path) else Path(base_dir),
+        relation=relation,
+        origin="project",
+    )
+
+
 def _dry_run_metrics(metrics, relations, source, base_dir) -> tuple[dict, list[str]]:
     compiled: dict[str, str] = {}
     errors: list[str] = []
@@ -1399,18 +1478,8 @@ def _dry_run_metrics(metrics, relations, source, base_dir) -> tuple[dict, list[s
         style = "qmark"
     for metric_name, definition in metrics.items():
         try:
-            if definition.derived is not None:
-                definition, relation = expand_derived(metric_name, definition, metrics, relations)
-            else:
-                relation = resolve_relation(definition, relations)
-            resolved = ResolvedMetric(
-                name=metric_name,
-                definition=definition,
-                source=source,
-                base_dir=base_dir if isinstance(base_dir, Path) else Path(base_dir),
-                relation=relation,
-                origin="project",
-            )
+            resolved = _inline_resolved(metric_name, metrics, relations, source, base_dir)
+            definition = resolved.definition
             dims = tuple(d.name for d in definition.dimensions)
             grain = definition.time_dimension.grain if definition.time_dimension else None
             bound = bind_resolved(resolved, dimensions=dims, grain=grain, paramstyle=style)
@@ -1461,16 +1530,19 @@ def _schema_findings(registry, source, base_dir, metrics, relations) -> tuple[bo
     return True, _metric_schema_findings(metrics, relations, tables, probed)
 
 
-def _probe_compiled(registry, source, base_dir, compiled: dict[str, str]) -> list[str]:
+def _probe_compiled(
+    registry, source, base_dir, compiled: dict[str, str], binds: dict[str, list] | None = None
+) -> list[str]:
     findings: list[str] = []
     try:
         with registry.connection(source, base_dir) as connector:
             for metric_name, sql in compiled.items():
+                bind = (binds or {}).get(metric_name, [])
                 try:
                     # semgrep: probing the author's own SQL is what lint does; values stay bound
                     # nosemgrep: sqlalchemy-execute-raw-query
                     connector.execute(
-                        f"SELECT * FROM ({sql}) sqldash_probe WHERE 1 = 0", [], 1, CancelToken()
+                        f"SELECT * FROM ({sql}) sqldash_probe WHERE 1 = 0", bind, 1, CancelToken()
                     )
                 except Exception as exc:
                     findings.append(
@@ -1627,6 +1699,7 @@ def _dry_run_metric_tiles(
     available, ambiguous = _metric_catalog(layer, repo)
     errors: list[str] = []
     probed: set[tuple] = set()
+    shapes: set[tuple] = set()
     for tile in dashboard.tiles:
         if not tile.metric or tile.metric.name in dashboard.metrics:
             continue
@@ -1650,12 +1723,61 @@ def _dry_run_metric_tiles(
             if not _metric_tile_query_already_linted(tile, resolved.definition):
                 errors.append(f"tile '{tile.id}': metric does not compile — {exc}")
             continue
+        shapes.add((tile.metric.name, bound.sql, repr([])))
         errors.extend(
             f"tile '{tile.id}': SQL fails against the source — {msg.split(' — ', 1)[-1]}"
             for msg in _probe_compiled(
                 registry, resolved.source, resolved.base_dir, {tile.id: bound.sql}
             )
         )
+    errors.extend(
+        _dry_run_reference_metrics(registry, dashboard, base_dir, available, ambiguous, shapes)
+    )
+    return errors
+
+
+def _dry_run_reference_metrics(
+    registry, dashboard, base_dir, available, ambiguous, probed: set[tuple]
+) -> list[str]:
+    """A metric reference runs as its metric with no dimensions and no grain,
+    under the dashboard's filters, so each one, inline or from the project, is
+    probed as exactly that query. A query already probed, by another
+    reference or by a metric tile of the same shape, is not probed again."""
+    errors: list[str] = []
+    for tile in dashboard.tiles:
+        references = tile.chart.references if tile.chart else []
+        for n, ref in enumerate(references, start=1):
+            name = ref.metric
+            if name is None or (name in ambiguous and name not in dashboard.metrics):
+                continue
+            label = f"tile '{tile.id}': reference {n} metric '{name}'"
+            try:
+                if name in dashboard.metrics:
+                    resolved = _inline_resolved(
+                        name, dashboard.metrics, dashboard.relations, dashboard.source, base_dir
+                    )
+                else:
+                    resolved = available.get(name)
+                    if resolved is None:
+                        continue
+                bound = bind_resolved(resolved, dimensions=(), grain=None, dash=dashboard, limit=1)
+            except (SemanticError, KeyError, ValueError) as exc:
+                errors.append(f"{label} does not compile: {exc}")
+                continue
+            shape = (name, bound.sql, repr(bound.bind))
+            if shape in probed:
+                continue
+            probed.add(shape)
+            errors.extend(
+                f"{label} fails against the source: {msg.split(' — ', 1)[-1]}"
+                for msg in _probe_compiled(
+                    registry,
+                    resolved.source,
+                    resolved.base_dir,
+                    {tile.id: bound.sql},
+                    {tile.id: bound.bind},
+                )
+            )
     return errors
 
 
