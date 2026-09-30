@@ -476,6 +476,16 @@ def _chart_unchanged(current: Tile | None, slim: dict[str, Any]) -> bool:
     return incoming == implied
 
 
+def _same_chart_value(key: str, written: Any, incoming: Any) -> bool:
+    """Compare the way `ChartSpec` reads the file: `y: revenue` and `y: [revenue]`
+    are the same chart, so neither spelling is rewritten into the other."""
+    if key == "y":
+        return ([written] if isinstance(written, str) else written) == (
+            [incoming] if isinstance(incoming, str) else incoming
+        )
+    return written == incoming
+
+
 def _write_chart(existing: CommentedMap, slim: dict[str, Any]) -> None:
     """Write a changed chart in the tersest form that still says it: `chart: bar`
     when only the type is set, otherwise key-by-key into the mapping the author
@@ -488,7 +498,7 @@ def _write_chart(existing: CommentedMap, slim: dict[str, Any]) -> None:
         _put_key(existing, "chart", _flow(slim))
         return
     for key, value in slim.items():
-        if node.get(key) != value:
+        if not _same_chart_value(key, node.get(key), value):
             node[key] = _flow(value)
     for key in list(node.keys()):
         field = ChartSpec.model_fields.get(key)
