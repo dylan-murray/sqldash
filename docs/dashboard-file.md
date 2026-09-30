@@ -348,6 +348,25 @@ You can always paste a raw SQLAlchemy URL instead
 (`source: "trino://user@host:8080/hive"`). `sqldash lint` validates the config: typo'd
 types, missing required fields, fields the dialect ignores, and which extra to install.
 
+### Snowflake SSO and the macOS Keychain
+
+With `authentication: externalbrowser`, the Snowflake driver keeps the sign-in token in
+the macOS Keychain so a restart does not open the browser again. The first time a
+Python interpreter reads that item, macOS asks whether to allow it. Choose **Always
+Allow** and that interpreter is not asked again.
+
+sqldash signs in once per account and user, whatever role, warehouse or dashboard asked
+first, and keeps the token in memory after the first Keychain read, so one serve session
+asks at most once. The allowance belongs to the interpreter binary, though, so expect the
+prompt again after upgrading Python, recreating a virtual environment on a new Python,
+or running sqldash under a different interpreter. A fresh browser sign-in rewrites the
+item, which can also clear an earlier allowance.
+
+To keep the Keychain out of it entirely, use a programmatic access token
+(`authentication: pat` with `token: ${env:SNOWFLAKE_PAT}`) or key-pair auth
+(`authentication: keypair` with `private_key_path`). Neither one caches anything in the
+Keychain.
+
 ### A Snowflake role turns secondary roles off
 
 Snowflake users get `DEFAULT_SECONDARY_ROLES = ALL` unless an admin changed it, and with
