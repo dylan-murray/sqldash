@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import { test } from "node:test";
 
 import {
@@ -227,4 +228,36 @@ test("promoting leaves nothing on the right and hands the left axis the right on
     axes: { left: { title: "Rate", min: 0, max: 1 } },
   });
   assert.equal(promoteRightAxis({ ...spec, y: ["revenue", "rate"] }), null);
+});
+
+test("a combo chart with a right axis also draws its references on the left axis", () => {
+  const option = translate(
+    { ...combo, references: [{ y: 45000, label: "Goal" }, { x: "w2", label: "Launch" }] },
+    weekly
+  );
+  assert.equal(option.yAxis.length, 2);
+  assert.deepEqual(option.series.slice(0, 2).map((s) => [s.type, s.yAxisIndex]), [
+    ["bar", 0],
+    ["line", 1],
+  ]);
+  const refs = option.series.find((s) => s.name === "__reference_lines");
+  assert.deepEqual(refs.markLine.data.map((d) => [d.yAxis, d.xAxis, d.label.formatter]), [
+    [45000, undefined, "Goal  $45,000"],
+    [undefined, "w2", "Launch"],
+  ]);
+  assert.equal(refs.yAxisIndex, undefined);
+  const echarts = createRequire(import.meta.url)("../sqldash/static/vendor/echarts.min.js");
+  const fake = globalThis.document;
+  delete globalThis.document;
+  try {
+    const chart = echarts.init(null, null, { renderer: "svg", ssr: true, width: 600, height: 300 });
+    chart.setOption(option);
+    const svg = chart.renderToSVGString();
+    chart.dispose();
+    for (const text of [">Goal  $45,000<", ">Launch<", ">Conversion<", ">Rate<"]) {
+      assert.ok(svg.includes(text), text);
+    }
+  } finally {
+    globalThis.document = fake;
+  }
 });

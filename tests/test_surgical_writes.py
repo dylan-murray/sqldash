@@ -3077,3 +3077,20 @@ def test_editing_a_tile_that_merges_another_leaves_the_other_alone(tmp_path):
     marks = {tile: c.series["rate"].type for tile, c in charts.items()}
     assert marks == {"a": "line", "b": "area"}, text
     assert text.startswith(TILE_MERGE.split("  - <<: *base")[0]), text
+
+
+def test_editing_a_series_keeps_the_comment_over_the_next_key(tmp_path):
+    doc = COMBO_DOC.replace("      axes:\n", "      # bounds for the rate\n      axes:\n").replace(
+        "          axis: right\n", "          axis: right\n          label: Rate\n"
+    )
+    (tmp_path / "d.yaml").write_text(doc)
+    text = _save_combo(
+        tmp_path,
+        {
+            "type": "bar",
+            "y": ["revenue", "rate"],
+            "series": {"rate": {"type": "line", "axis": "right"}},
+            "axes": {"right": {"title": "Rate", "min": 0}},
+        },
+    )
+    assert text == doc.replace("          label: Rate\n", ""), text
