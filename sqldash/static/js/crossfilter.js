@@ -19,6 +19,10 @@ export function crossFilterPlan(tile, filters) {
   if (!mapping) return null;
   const entries = [];
   const errors = [];
+  const kind = tile.chart?.type;
+  if (kind === "heatmap" || kind === "histogram") {
+    errors.push(`a ${kind} tile cannot cross-filter: its marks are bins or cells, not rows`);
+  }
   for (const [name, column] of Object.entries(mapping)) {
     const def = filters.find((f) => f.name === name);
     if (!def) errors.push(`cross_filter '${name}' is not a filter on this dashboard`);
@@ -29,9 +33,12 @@ export function crossFilterPlan(tile, filters) {
 }
 
 export function offValue(def, options = []) {
-  if (def.type === "select" && options.includes("all")) return "all";
+  const choices = options.map((o) => (typeof o === "string" ? { value: o, kind: "string" } : o));
+  if (def.type === "select" && choices.some((o) => o.value === "all")) return "all";
   const fallback = def.resolved_default;
-  return fallback === null || fallback === undefined ? "" : String(fallback);
+  if (fallback === null || fallback === undefined) return "";
+  const kind = typeof fallback === "boolean" || typeof fallback === "number" ? typeof fallback : null;
+  return (choices.length && matchOption(choices, String(fallback), kind)) || String(fallback);
 }
 
 function sameValue(def, a, b) {

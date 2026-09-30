@@ -520,7 +520,7 @@ function crossOffs(plan) {
   const offs = {};
   for (const { name, def } of plan.entries) {
     const input = filterInput(name);
-    const options = input?.tagName === "SELECT" ? [...input.options].map((o) => o.value) : [];
+    const options = input?.tagName === "SELECT" ? selectOptions(input) : [];
     offs[name] = offValue(def, options);
   }
   return offs;

@@ -45,7 +45,7 @@ from sqldash.params import (
     resolve_daterange_preset,
     validate_template,
 )
-from sqldash.project.drill import plan_drill
+from sqldash.project.drill import UNCLICKABLE_CHARTS, plan_drill
 from sqldash.project.sources import (
     attach_dir_missing,
     database_file_missing,
@@ -724,6 +724,16 @@ def _lint_cross_filters(dashboard, file: str) -> list[Finding]:
     findings: list[Finding] = []
     declared = {f.name: f for f in dashboard.filters}
     for tile in dashboard.tiles:
+        kind = tile.chart.type if tile.chart else None
+        if tile.cross_filter and kind in UNCLICKABLE_CHARTS:
+            findings.append(
+                Finding(
+                    file,
+                    "error",
+                    f"tile '{tile.id}': a {kind} tile cannot cross-filter: its marks are "
+                    "bins or cells, not rows of the result",
+                )
+            )
         for name in tile.cross_filter or {}:
             target = declared.get(name)
             where = f"tile '{tile.id}': cross_filter '{name}'"

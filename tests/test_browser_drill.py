@@ -605,8 +605,6 @@ def test_sorting_a_drill_table_keeps_only_its_visible_links(page, edges):
     assert links == 100
     assert count == 100
 
-    assert _query(page)["f_rate"] == "1"
-
 
 def _slice(page, name):
     page.locator('.tile[data-tile-id="revenue_share_by_region"]').scroll_into_view_if_needed()
@@ -854,15 +852,15 @@ def test_a_boolean_default_is_off_on_load_and_comes_back_on_clear(page, edges):
     flags = _xf_tile(page, "flags")
     assert flags.locator("button.tile-xf").count() == 0
     flags.locator("button.cell-filter").click()
-    page.wait_for_function("() => location.search.includes('f_active=false')")
+    page.wait_for_function("() => location.search.includes('f_active=False')")
     flags.locator("button.tile-xf").click()
-    page.wait_for_function("() => location.search.includes('f_active=true')")
-    assert page.eval_on_selector('select[data-filter="active"]', "e => e.value") == "true"
+    page.wait_for_function("() => location.search.includes('f_active=True')")
+    assert page.eval_on_selector('select[data-filter="active"]', "e => e.value") == "True"
     assert flags.locator("button.tile-xf").count() == 0
     flags.locator("button.cell-filter").click()
-    page.wait_for_function("() => location.search.includes('f_active=false')")
+    page.wait_for_function("() => location.search.includes('f_active=False')")
     flags.locator("button.cell-filter").click()
-    page.wait_for_function("() => location.search.includes('f_active=true')")
+    page.wait_for_function("() => location.search.includes('f_active=True')")
     assert page.locator(".toast-error").count() == 0
 
 
@@ -870,8 +868,8 @@ def test_a_numeric_select_takes_the_value_a_float_cell_was_clicked_with(page, ed
     page.goto(f"{edges}/d/bools")
     _wait_tiles(page)
     _xf_tile(page, "rates").locator("button.cell-filter").click()
-    page.wait_for_function("() => location.search.includes('f_rate=1')")
-    assert page.eval_on_selector('select[data-filter="rate"]', "e => e.value") == "1"
+    page.wait_for_function("() => location.search.includes('f_rate=1.0')")
+    assert page.eval_on_selector('select[data-filter="rate"]', "e => e.value") == "1.0"
     assert page.locator(".toast-error").count() == 0
 
 

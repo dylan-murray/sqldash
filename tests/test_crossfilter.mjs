@@ -212,6 +212,11 @@ test("a null under a filter that is not narrowing anything does not unpick the r
 test("a boolean select with a default resets to it and reads as off there", () => {
   const def = { name: "active", type: "select", options: [true, false], resolved_default: true };
   const flags = crossFilterPlan({ cross_filter: { active: "active" } }, [def]);
+  const rendered = [
+    { value: "True", kind: "boolean" },
+    { value: "False", kind: "boolean" },
+  ];
+  assert.equal(offValue(def, rendered), "True");
   const offs = { active: offValue(def, ["true", "false"]) };
   assert.equal(offs.active, "true");
   assert.equal(activeValues(flags, { active: "true" }, offs), null);
@@ -279,4 +284,11 @@ test("matching 10k cells against 10k numeric options is linear, not a scan per c
   assert.equal(series.data[1].itemStyle.opacity, 0.28);
   const took = Math.min(...times);
   assert.ok(took < 100, `matching took ${Math.round(took)}ms at best`);
+});
+
+test("a heatmap or histogram plan names why its clicks do nothing", () => {
+  for (const type of ["heatmap", "histogram"]) {
+    const plan = crossFilterPlan({ chart: { type }, cross_filter: { region: "region" } }, filters);
+    assert.match(plan.errors[0], new RegExp(`a ${type} tile cannot cross-filter`));
+  }
 });

@@ -183,3 +183,13 @@ def test_turning_a_cross_filter_tile_into_text_drops_its_mapping(tmp_path, mappi
     saved = store.load("overview")[0].tiles[0]
     assert saved.type == "text"
     assert saved.cross_filter is None
+
+
+@pytest.mark.parametrize(
+    "chart",
+    ["{type: heatmap, x: region, y: region, value: revenue}", "{type: histogram, x: revenue}"],
+)
+def test_a_heatmap_or_histogram_cannot_cross_filter(chart):
+    text = _dashboard("{region: region}").replace("    chart: pie\n", f"    chart: {chart}\n")
+    errors = _findings(text, "error")
+    assert any("cannot cross-filter" in e and "tile 'by_region'" in e for e in errors), errors
