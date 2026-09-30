@@ -924,6 +924,8 @@ def test_a_sqlalchemy_the_snowflake_dialect_cannot_load_names_the_fix(monkeypatc
     """SQLAlchemy 2.1 renamed a class snowflake-sqlalchemy 1.x subclasses, so importing
     the dialect raised a bare AttributeError from deep inside it instead of saying
     which versions clash."""
+    pytest.importorskip("snowflake.connector")
+
     from sqldash.connectors.engine import build_engine
 
     real_import = builtins.__import__
