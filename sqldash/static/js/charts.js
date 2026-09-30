@@ -680,7 +680,14 @@ function xyOption(spec, result, forcedColor, height = 0, width = 0) {
   if (spec.type === "bar" && !isTemporal && !horizontal) {
     option.xAxis.axisLabel.interval = "auto";
   }
-  addReferences(option, spec, result, { horizontal, isTemporal, yFormat, width, height });
+  const referenceFormat = combo ? axisFormat(spec, combo, 0) : yFormat;
+  addReferences(option, spec, result, {
+    horizontal,
+    isTemporal,
+    yFormat: referenceFormat,
+    width,
+    height,
+  });
   return option;
 }
 
@@ -789,10 +796,19 @@ export function referenceExtent(extent, values, splitNumber = 5) {
   return { min: tidy(Math.floor(lo / step) * step), max: tidy(Math.ceil(hi / step) * step) };
 }
 
+/* Only a bound ECharts fits to the data stretches for a reference: one the
+   author fixed (`axes.left.min`) stays where it was put. */
 function reachValueAxis(axis, values) {
   const split = axis.splitNumber ?? 5;
-  axis.min = (e) => referenceExtent(e, values, split)?.min ?? null;
-  axis.max = (e) => referenceExtent(e, values, split)?.max ?? null;
+  if (typeof axis.min !== "number") axis.min = (e) => referenceExtent(e, values, split)?.min ?? null;
+  if (typeof axis.max !== "number") axis.max = (e) => referenceExtent(e, values, split)?.max ?? null;
+}
+
+/* References a chart cannot draw, one line each, for the tile to name. */
+const undrawn = new WeakMap();
+
+export function undrawnReferences(option) {
+  return undrawn.get(option) ?? [];
 }
 
 function reachTimeAxis(axis, times) {
@@ -909,6 +925,19 @@ function addReferences(option, spec, result, { horizontal, isTemporal, yFormat, 
   const surface = cssVar("--surface");
   const valueKey = horizontal ? "xAxis" : "yAxis";
   const categoryKey = horizontal ? "yAxis" : "xAxis";
+  const valueAxis = Array.isArray(option[valueKey]) ? option[valueKey][0] : option[valueKey];
+  const fixedMin = typeof valueAxis.min === "number" ? valueAxis.min : -Infinity;
+  const fixedMax = typeof valueAxis.max === "number" ? valueAxis.max : Infinity;
+  const skipped = [];
+  const outside = (label, ...ys) => {
+    const off = ys.find((v) => v < fixedMin || v > fixedMax);
+    if (off === undefined) return false;
+    const range = `${Number.isFinite(fixedMin) ? fixedMin : "no minimum"} to ${
+      Number.isFinite(fixedMax) ? fixedMax : "no maximum"
+    }`;
+    skipped.push(`reference '${label ?? off}' is not drawn: ${off} is outside the axis bounds (${range})`);
+    return true;
+  };
   const categories = categoryPositions(option.series);
   const temporalCategories = TEMPORAL_TYPES.has(result.columns[colIndex(result, spec.x)]?.type);
   const lines = [];
@@ -934,6 +963,7 @@ function addReferences(option, spec, result, { horizontal, isTemporal, yFormat, 
     if (Array.isArray(ref.y)) {
       const [a, b] = ref.y.map(finiteNumber);
       if (a === null || b === null) continue;
+      if (outside(label, a, b)) continue;
       values.push(a, b);
       const text = label ?? `${referenceValue(Math.min(a, b), fmt)} – ${referenceValue(Math.max(a, b), fmt)}`;
       bands.push({
@@ -976,6 +1006,7 @@ function addReferences(option, spec, result, { horizontal, isTemporal, yFormat, 
     } else {
       const y = finiteNumber(ref.y);
       if (y === null) continue;
+      if (outside(label, y)) continue;
       values.push(y);
       const shown = referenceValue(y, fmt);
       valueLines.push(y);
@@ -992,7 +1023,8 @@ function addReferences(option, spec, result, { horizontal, isTemporal, yFormat, 
       });
     }
   }
-  if (values.length) reachValueAxis(option[valueKey], values);
+  if (skipped.length) undrawn.set(option, skipped);
+  if (values.length) reachValueAxis(valueAxis, values);
   liftCrowdedBandLabels(bandLabels, valueLines, option.series, values, height);
   const labelsAbove = lines.some((line) => line.label.position === "end");
   if (labelsAbove && option.legend.show) option.grid.top += 18;

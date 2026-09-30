@@ -7687,3 +7687,39 @@ def test_a_query_that_drops_the_left_column_promotes_the_builder_state(page, tmp
         assert extent == [0, 1], extent
     finally:
         _stop_server(server, thread, page)
+
+
+def test_a_reference_outside_fixed_bounds_is_named_on_the_tile(page, tmp_path_factory):
+    root = tmp_path_factory.mktemp("refbounds")
+    (root / "d.yaml").write_text(
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        "tiles:\n"
+        "  - title: T\n"
+        "    chart:\n"
+        "      type: bar\n"
+        "      x: w\n"
+        "      y: [revenue]\n"
+        "      axes: {left: {min: 0, max: 100}}\n"
+        "      references: [{y: 15, label: Inside}, {y: 250, label: Outside}]\n"
+        "    sql: \"SELECT w, revenue FROM (VALUES ('a', 10), ('b', 20)) t(w, revenue)\"\n"
+    )
+    app = create_app(root, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    try:
+        page.goto(f"http://127.0.0.1:{port}/d/d", wait_until="load")
+        _wait_tiles(page)
+        note = page.locator('.tile[data-tile-id="t"] .reference-note')
+        note.wait_for()
+        assert note.inner_text() == (
+            "reference 'Outside' is not drawn: 250 is outside the axis bounds (0 to 100)"
+        )
+        extent = page.evaluate(
+            """() => {
+              const m = document.querySelector('.tile[data-tile-id="t"] .chart-mount');
+              return echarts.getInstanceByDom(m).getModel().getComponent('yAxis')
+                .axis.scale.getExtent();
+            }"""
+        )
+        assert extent == [0, 100], extent
+    finally:
+        _stop_server(server, thread, page)

@@ -10,6 +10,7 @@ import {
   renderTable,
   setFormatConfig,
   translate,
+  undrawnReferences,
 } from "/static/js/charts.js";
 import { paramNamesIn } from "/static/js/params.js";
 import { compareWindow, currentThenPrevious, presetRange } from "/static/js/period.js";
@@ -228,7 +229,7 @@ export function renderTile(el, tile, result, previous = null) {
   // a line that stops early reads as the data ending rather than the row cap.
   // Same note renderTable uses, so the two agree about the same result.
   markTruncated(body, result);
-  noteReferenceErrors(body, referenceRun?.errors);
+  noteReferenceErrors(body, [...(referenceRun?.errors ?? []), ...undrawnReferences(option)]);
 }
 
 /* A reference the warehouse refused is left off the chart, so the tile says

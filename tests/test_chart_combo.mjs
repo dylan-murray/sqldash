@@ -9,6 +9,7 @@ import {
   pruneSpecForType,
   setFormatConfig,
   translate,
+  undrawnReferences,
 } from "../sqldash/static/js/charts.js";
 
 setFormatConfig({ locale: "en-US" });
@@ -260,4 +261,102 @@ test("a combo chart with a right axis also draws its references on the left axis
   } finally {
     globalThis.document = fake;
   }
+});
+
+const vendored = createRequire(import.meta.url)("../sqldash/static/vendor/echarts.min.js");
+
+function rendered(option) {
+  const fake = globalThis.document;
+  delete globalThis.document;
+  try {
+    const chart = vendored.init(null, null, { renderer: "svg", ssr: true, width: 600, height: 300 });
+    chart.setOption(option);
+    const left = chart.getModel().getComponent("yAxis", 0).axis.scale.getExtent();
+    const svg = chart.renderToSVGString();
+    chart.dispose();
+    return { left, svg };
+  } finally {
+    globalThis.document = fake;
+  }
+}
+
+const small = {
+  columns: [
+    { name: "week", type: "string" },
+    { name: "revenue", type: "float" },
+    { name: "rate", type: "float" },
+  ],
+  rows: [
+    ["w1", 10, 0.2],
+    ["w2", 20, 0.4],
+  ],
+};
+
+test("a reference past the data stretches the left axis of a two-axis chart", () => {
+  const option = translate(
+    {
+      type: "bar",
+      x: "week",
+      y: ["revenue", "rate"],
+      series: { rate: { type: "line", axis: "right" } },
+      references: [{ y: 100, label: "TARGET" }],
+    },
+    small
+  );
+  const { left, svg } = rendered(option);
+  assert.deepEqual(left, [0, 100]);
+  assert.ok(svg.includes(">TARGET  100<"), "TARGET drawn");
+});
+
+test("fixed left bounds stay fixed, and a reference outside them is left off with a note", () => {
+  const spec = {
+    type: "bar",
+    x: "week",
+    y: ["revenue"],
+    axes: { left: { min: 0, max: 100 } },
+    references: [{ y: 15, label: "Inside" }, { y: 250, label: "Outside" }],
+  };
+  const option = translate(spec, small);
+  const { left, svg } = rendered(option);
+  assert.deepEqual(left, [0, 100]);
+  assert.ok(svg.includes(">Inside  15<"));
+  assert.ok(!svg.includes("Outside"));
+  assert.deepEqual(undrawnReferences(option), [
+    "reference 'Outside' is not drawn: 250 is outside the axis bounds (0 to 100)",
+  ]);
+  const onlyMin = translate({ ...spec, axes: { left: { min: 5 } } }, small);
+  assert.equal(onlyMin.yAxis.min, 5);
+  assert.equal(typeof onlyMin.yAxis.max, "function");
+});
+
+test("reference labels use the left axis's format, not the first y column's", () => {
+  const option = translate(
+    {
+      type: "bar",
+      x: "week",
+      y: ["rate", "revenue"],
+      format: { rate: "percent", revenue: "currency" },
+      series: { rate: { type: "line", axis: "right" } },
+      references: [{ y: 15, label: "Goal" }],
+    },
+    small
+  );
+  const refs = option.series.find((s) => s.name === "__reference_lines");
+  assert.equal(refs.markLine.data[0].label.formatter, "Goal  $15");
+  const authored = translate(
+    {
+      type: "bar",
+      x: "week",
+      y: ["rate", "revenue"],
+      format: { rate: "percent", revenue: "currency" },
+      series: { rate: { type: "line", axis: "right" } },
+      axes: { left: { format: "compact" } },
+      references: [{ y: 1500, label: "Goal" }],
+    },
+    small
+  );
+  assert.equal(
+    authored.series.find((s) => s.name === "__reference_lines").markLine.data[0].label.formatter,
+    "Goal  1.5K"
+  );
 });

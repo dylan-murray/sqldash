@@ -202,7 +202,10 @@ no points, and they never enter the legend or the tooltip, so a target does not 
 as another observed series.
 
 A value past the data widens the axis to fit it, so a goal the series has not reached
-yet is still on the chart. A category marker that the result does not contain is left
+yet is still on the chart. A bound fixed with `axes.left.min` or `max` stays put, and a
+reference outside it is not drawn; the tile names it in a note instead. On a chart
+with a right axis, references read against the left one and take its format. A
+category marker that the result does not contain is left
 off rather than drawn in the wrong place. It matches a category exactly, except that
 a date finds its day on a timestamp column a bar chart draws as categories. A number
 marks the category with that value, not the position. On a narrow tile a line keeps
