@@ -275,7 +275,9 @@ test("tooltip edges round only as far as they stay distinct, close and exact whe
       if (i) assert.ok(v > shown[i - 1], `distinct ${label}`);
       assert.ok(Math.abs(v - edges[i]) <= summary.width / 1000, `close ${label}`);
       if (String(edges[i]).split(".")[1]?.length <= 6) assert.equal(v, edges[i], `short ${label}`);
-      const between = values.filter((x) => x >= Math.min(v, edges[i]) && x < Math.max(v, edges[i]));
+      const [lo, hi] = [Math.min(v, edges[i]), Math.max(v, edges[i])];
+      const last = i === edges.length - 1;
+      const between = values.filter((x) => (last ? x > lo && x <= hi : x >= lo && x < hi));
       assert.deepEqual(between, [], `crosses data ${label}`);
     });
   }
@@ -286,7 +288,7 @@ test("tooltip edges round only as far as they stay distinct, close and exact whe
   const counted = binValues([0.1234567, 1.1234567, 2.1234567], { bins: 2 });
   assert.deepEqual(
     counted.bins.map((b) => binLabel(b, "number", counted.digits)),
-    ["0.123 to under 1.123", "1.123 to 2.123"]
+    ["0.1234567 to under 1.1234567", "1.1234567 to 2.1234567"]
   );
 });
 
@@ -300,6 +302,35 @@ test("compact axis ticks that would read the same fall back to full numbers", ()
   ]);
   assert.deepEqual(tickLabels([10000, 20000, 30000], "number"), ["10K", "20K", "30K"]);
   assert.deepEqual(tickLabels([1e6, 1.0001e6], "currency"), ["$1,000,000", "$1,000,100"]);
+});
+
+test("ordinary float sums always bin, and every value is counted", () => {
+  const sums = [];
+  for (let n = 1; n <= 12; n += 1) {
+    let total = 0;
+    for (let i = 0; i < n; i += 1) total += 0.1;
+    sums.push(total, n * 0.1, n * 0.2, n * 0.3, 0.1 + 0.2 * n, 0.3 * n - 0.1);
+  }
+  const inputs = [[0, 0.1 + 0.2], [0.1 + 0.2, 0.6], [0, 0.1 + 0.2 + 0.3], sums];
+  for (let n = 1; n <= 12; n += 1) inputs.push(sums.slice(0, n * 3));
+  const widths = [0.1, 0.2, 0.25, 0.3, 0.5, 1].map((w) => ({ bin_width: w }));
+  const layouts = [{}, { bins: 3 }, { bins: 7 }, ...widths];
+  for (const values of inputs) {
+    for (const options of layouts) {
+      const summary = binValues(values, options);
+      const label = JSON.stringify([values.slice(0, 4), options]);
+      assert.notEqual(summary.unbinnable, true, label);
+      assert.ok(summary.bins.length > 0, label);
+      assert.equal(total(summary), values.length, label);
+    }
+  }
+});
+
+test("a constant fractional column labels its only value exactly", () => {
+  for (const v of [123.456, 1.234567, 0.001]) {
+    const summary = binValues([v, v], {});
+    assert.equal(binLabel(summary.bins[0], "number", summary.digits), String(v));
+  }
 });
 
 test("interval labels say which edge is included", () => {

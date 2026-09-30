@@ -61,10 +61,12 @@ function isShort(value) {
   return decimalsOf(value) <= SHORT_DECIMALS;
 }
 
-function crossesData(edge, shown, sorted) {
+function crossesData(edge, shown, sorted, inclusive) {
   if (shown === edge) return false;
-  const next = sorted[firstAtLeast(sorted, Math.min(edge, shown))];
-  return next !== undefined && next < Math.max(edge, shown);
+  const lo = Math.min(edge, shown);
+  const hi = Math.max(edge, shown);
+  const next = sorted[inclusive ? firstAbove(sorted, lo) : firstAtLeast(sorted, lo)];
+  return next !== undefined && (inclusive ? next <= hi : next < hi);
 }
 
 function displayDigits(edges, width, sorted) {
@@ -75,7 +77,7 @@ function displayDigits(edges, width, sorted) {
       (v, i) =>
         Math.abs(v - edges[i]) <= tolerance &&
         (i === 0 || v > shown[i - 1]) &&
-        !crossesData(edges[i], v, sorted)
+        !crossesData(edges[i], v, sorted, i === edges.length - 1)
     );
     if (faithful) return d;
   }
@@ -111,7 +113,7 @@ function settledEdge(raw, scale, sorted) {
   const hi = Math.max(raw, tidy);
   const next = sorted[firstAbove(sorted, lo)];
   if (next !== undefined && next < hi) return raw;
-  if (tidy > raw && sorted[firstAbove(sorted, raw) - 1] === raw) return raw;
+  if (sorted[firstAbove(sorted, raw) - 1] === raw) return raw;
   return tidy;
 }
 
@@ -421,7 +423,7 @@ export function histogramOption(spec, result, forcedColor, height = 0) {
     axisLabel: {
       ...option.xAxis.axisLabel,
       formatter: (v) => {
-        if (extent?.only !== undefined && Math.abs(v - extent.only) > 1e-9) return "";
+        if (extent?.only !== undefined) return v === extent.only ? exactText(v, xFormat) : "";
         return tickText.get(v) ?? edgeLabel(v, xFormat, extent?.interval);
       },
     },
@@ -429,8 +431,8 @@ export function histogramOption(spec, result, forcedColor, height = 0) {
   };
   delete option.xAxis.only;
   delete option.xAxis.ticks;
-  if (extent && extent.only === undefined) {
-    option.xAxis.axisLabel.customValues = extent.ticks;
+  if (extent) {
+    option.xAxis.axisLabel.customValues = extent.only === undefined ? extent.ticks : [extent.only];
   }
   option.yAxis.axisTick = { show: false };
   option.yAxis.minInterval = percent ? 0 : 1;

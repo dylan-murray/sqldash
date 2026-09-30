@@ -143,6 +143,9 @@ tiles:
   - title: Close together
     chart: {type: histogram, x: v, bins: 2}
     sql: SELECT * FROM (VALUES (10000.0), (10001.0), (10002.0)) t(v)
+  - title: Fractional constant
+    chart: {type: histogram, x: v}
+    sql: SELECT 123.456::DOUBLE AS v FROM range(0, 2)
 """
 
 
@@ -223,6 +226,7 @@ def test_histograms_render_real_duckdb_distributions(tmp_path):
     close = [t for t in state["close_together"]["texts"] if t.startswith("10")]
     assert len(close) > 1, close
     assert len(set(close)) == len(close), close
+    assert "123.456" in state["fractional_constant"]["texts"], state["fractional_constant"]["texts"]
     assert narrow["texts"], narrow
     assert all(right <= narrow["width"] - 8 for _, right in narrow["texts"]), narrow
 
