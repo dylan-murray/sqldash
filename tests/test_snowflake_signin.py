@@ -6,6 +6,7 @@ in the browser when there is none, and store the new token. Each Keychain read i
 chance for macOS to prompt, so the tests count them.
 """
 
+import contextlib
 import subprocess
 import sys
 import textwrap
@@ -387,6 +388,65 @@ def test_a_finished_connection_is_not_held_behind_another_sources_sign_in(monkey
         release_b.set()
         a.dispose()
         b.dispose()
+
+
+def test_a_finished_connection_does_not_wait_while_another_sign_in_holds_the_gate(
+    monkeypatch,
+):
+    """B's request holds the gate for all of SIGNIN_WAIT. A, whose own sign-in
+    had already finished, used to queue behind it for up to two minutes."""
+    monkeypatch.setattr(engine_module, "SIGNIN_WAIT", 0.2)
+    monkeypatch.setattr(engine_module, "SIGNIN_RECHECK", 0.05)
+    release_b = threading.Event()
+
+    def connect(**kwargs):
+        if kwargs.get("warehouse") == "A":
+            time.sleep(0.3)
+        else:
+            release_b.wait(5)
+        return FakeConn()
+
+    monkeypatch.setattr(snowflake_connector, "connect", connect)
+    a = engine_module.build_engine(source(warehouse="A"), None)
+    b = engine_module.build_engine(source(warehouse="B"), None)
+    b_waiting = threading.Thread(target=lambda: suppress_signin_pending(b))
+    try:
+        with pytest.raises(ConnectorError, match="waiting for you to sign in"):
+            a.raw_connection()
+        time.sleep(0.2)
+        monkeypatch.setattr(engine_module, "SIGNIN_WAIT", 3.0)
+        b_waiting.start()
+        time.sleep(0.2)
+        assert b_waiting.is_alive()
+        start = time.monotonic()
+        a.raw_connection().close()
+        assert time.monotonic() - start < 0.5
+    finally:
+        release_b.set()
+        b_waiting.join(5)
+        a.dispose()
+        b.dispose()
+
+
+def suppress_signin_pending(engine):
+    with contextlib.suppress(ConnectorError):
+        engine.raw_connection().close()
+
+
+def test_a_private_key_wins_over_an_explicit_snowflake_authenticator():
+    """The connector switches to SNOWFLAKE_JWT whenever a private key is given,
+    whatever `authenticator` says, so the gate has to call it a key pair too."""
+    assert (
+        engine_module.snowflake_auth_method(
+            {"authenticator": "snowflake", "private_key_file": "/k.p8"}
+        )
+        == "keypair"
+    )
+    assert engine_module.snowflake_auth_method({"authenticator": "snowflake"}) == "password"
+    assert engine_module.snowflake_auth_method({"private_key": b"k"}) == "keypair"
+    assert engine_module.snowflake_auth_method({"authenticator": "EXTERNALBROWSER"}) == (
+        "externalbrowser"
+    )
 
 
 def test_an_authentication_policy_rejection_pauses_every_source(driver, registry, monkeypatch):

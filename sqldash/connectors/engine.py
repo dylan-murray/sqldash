@@ -711,12 +711,13 @@ _SIGNIN_GATES_LOCK = threading.Lock()
 def snowflake_auth_method(kwargs: dict[str, Any]) -> str:
     """How these connect kwargs log in. Password and key-pair logins send no
     ``authenticator``, so it alone would put them on one gate, and a wrong
-    password would pause a key pair that works."""
+    password would pause a key pair that works. A private key wins over any
+    ``authenticator``, as it does in the connector (SNOWFLAKE_JWT)."""
+    if kwargs.get("private_key_file") or kwargs.get("private_key"):
+        return "keypair"
     authenticator = str(kwargs.get("authenticator") or "").lower()
     if authenticator:
         return SNOWFLAKE_AUTHENTICATORS.get(authenticator, authenticator)
-    if kwargs.get("private_key_file") or kwargs.get("private_key"):
-        return "keypair"
     return "password"
 
 
@@ -770,19 +771,38 @@ def build_engine(source: "Source", base_dir: Path | None) -> "Engine":
         gate = signin_gate(kwargs)
         local = Cooldown()
         mine: dict[str, SignInAttempt | None] = {"attempt": None}
+        mine_lock = threading.Lock()
 
         def login():
             return snowflake.connector.connect(**kwargs)
 
+        def take(attempt=None):
+            """Hand this engine's finished (or given) attempt to exactly one caller."""
+            with mine_lock:
+                own = mine["attempt"]
+                if own is None or (attempt is not None and own is not attempt):
+                    return None
+                if attempt is None and not (own.done.is_set() or own.orphaned):
+                    return None
+                mine["attempt"] = None
+                return own
+
         def claim(attempt):
-            mine["attempt"] = None
             if attempt.error is not None:
                 raise (attempt.failure or ConnectorError(str(attempt.error))) from attempt.error
             return attempt.conn
 
+        def finished_connection():
+            own = take()
+            if own is not None and not own.orphaned and own.error is None:
+                return own.conn
+            return None
+
         def connect():
-            own = mine["attempt"]
-            waiting = None if own is not None and own.done.is_set() else gate.inflight
+            conn = finished_connection()
+            if conn is not None:
+                return conn
+            waiting = gate.inflight
             if (
                 waiting is not None
                 and not waiting.abandoned()
@@ -790,13 +810,9 @@ def build_engine(source: "Source", base_dir: Path | None) -> "Engine":
             ):
                 raise ConnectorError(SIGNIN_PENDING)
             with gate.lock:
-                attempt = mine["attempt"]
-                if attempt is not None and attempt.orphaned:
-                    mine["attempt"] = attempt = None
-                if attempt is not None and attempt.done.is_set():
-                    mine["attempt"] = None
-                    if attempt.error is None:
-                        return claim(attempt)
+                conn = finished_connection()
+                if conn is not None:
+                    return conn
                 gate.cooldown.check()
                 local.check()
                 if not browser:
@@ -814,14 +830,20 @@ def build_engine(source: "Source", base_dir: Path | None) -> "Engine":
                 if inflight is not None:
                     if not inflight.done.wait(SIGNIN_RECHECK):
                         raise ConnectorError(SIGNIN_PENDING)
-                    if inflight is mine["attempt"]:
-                        return claim(inflight)
+                    own = take(inflight)
+                    if own is not None:
+                        return claim(own)
                     gate.cooldown.check()
-                attempt = mine["attempt"] = gate.inflight = SignInAttempt(gate, local, login)
+                attempt = gate.inflight = SignInAttempt(gate, local, login)
+                with mine_lock:
+                    mine["attempt"] = attempt
                 attempt.start()
                 if not attempt.done.wait(SIGNIN_WAIT):
                     raise ConnectorError(SIGNIN_PENDING)
-                return claim(attempt)
+                own = take(attempt)
+                if own is None:
+                    raise ConnectorError(SIGNIN_PENDING)
+                return claim(own)
 
         engine = create_engine("snowflake://sqldash", creator=connect, **common)
 
