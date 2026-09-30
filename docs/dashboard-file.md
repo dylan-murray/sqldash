@@ -51,8 +51,71 @@ take static `options:` or `options_sql:`.
 
 ## Chart types
 
-`line`, `bar`, `area`, `scatter`, `pie`, `big_number`, `table`, plus markdown tiles
-(just a `markdown:` key).
+`line`, `bar`, `area`, `scatter`, `pie`, `heatmap`, `big_number`, `table`, plus
+markdown tiles (just a `markdown:` key).
+
+### Heatmaps
+
+A heatmap shades a grid of two categorical columns by a number, for patterns like
+weekday by hour or region by product:
+
+```yaml
+- title: Orders by weekday and hour
+  chart:
+    type: heatmap
+    x: hour
+    y: weekday
+    value: orders
+    y_order: [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
+  sql: |
+    SELECT dayname(ordered_at)[:3] AS weekday, hour(ordered_at) AS hour,
+           COUNT(*) AS orders
+    FROM orders GROUP BY 1, 2
+
+- title: Revenue by region and category
+  format: currency
+  chart: {type: heatmap, x: category, y: region, value: amount, aggregate: sum}
+  sql: SELECT region, category, amount FROM orders
+```
+
+| Key | Meaning |
+|---|---|
+| `x`, `y` | The two columns that make the grid. Default to the first text columns, then integer ones. |
+| `value` | The numeric column that shades each cell. Not needed with `aggregate: count`. |
+| `aggregate` | `sum`, `avg`, `count`, `min` or `max` over the rows that share a cell. |
+| `palette` | `sequential` (the default, light to the tile's color) or `diverging`. |
+| `midpoint` | Where a `diverging` palette turns from one color to the other. Defaults to 0. |
+| `x_order`, `y_order` | Categories to put first, in this order, whether or not the result has them. Quote integers larger than 9007199254740991. |
+
+Without `aggregate`, each cell must come from exactly one row, as a query that
+already groups by `x` and `y` returns. If two rows land in one cell the heatmap
+draws nothing and says how many cells have more than one row; it never keeps one
+and drops the other. `sum`, `avg`, `min` and `max` skip null values, the way SQL
+does, and `count` counts rows. The tooltip names the aggregation ("Sum of
+amount") and how many rows made the cell.
+
+A cell no row reaches is drawn hatched, so a missing combination never reads as
+zero, and a zero is shaded like any other value. A cell whose rows are all null
+is hatched too, and its tooltip says there is no value. A null `x` or `y` becomes
+its own `null` category, placed last.
+
+Categories keep the order the query returned them in, so an `ORDER BY` sets it;
+numeric and date columns sort ascending, and timestamps with a UTC offset sort
+by the instant they name, to the millisecond (two within the same millisecond
+keep the order of their text). `x_order` and `y_order` pin any order
+you want, like weekdays. A diverging palette is symmetric around its midpoint,
+so the darkest color on each side means the same distance from it.
+
+Each axis shows at most 60 categories, in that order; the line above the chart
+says how many were left out, and a result cut short by the row cap gets the
+tile's usual note under the chart.
+Long labels are shortened on the axis and shown in full in the tooltip. Clicking
+a cell does not cross-filter the dashboard: a cell is two values at once, and a
+filter takes one.
+
+`aggregate`, `palette`, `midpoint`, `x_order` and `y_order` are heatmap keys, and
+`sqldash lint` rejects them on any other chart type, as it does a heatmap with
+more than one `y` column.
 
 ## Reference lines
 

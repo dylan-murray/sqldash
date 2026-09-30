@@ -5,9 +5,16 @@ import re
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    FiniteFloat,
+    field_validator,
+    model_validator,
+)
 
-ChartType = Literal["line", "bar", "area", "scatter", "pie", "big_number", "table"]
+ChartType = Literal["line", "bar", "area", "scatter", "pie", "heatmap", "big_number", "table"]
 REFERENCE_CHART_TYPES = ("line", "bar", "area", "scatter")
 ReferenceColor = Literal[
     "ink",
@@ -26,6 +33,8 @@ ReferenceColor = Literal[
 ]
 NAMED_FORMATS = ("number", "currency", "percent", "compact", "date")
 CURRENCY_CODE = re.compile(r"^[A-Z]{3}$")
+HEATMAP_FIELDS = ("aggregate", "palette", "midpoint", "x_order", "y_order")
+EXACT_IN_BROWSER = 2**53 - 1
 IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -126,6 +135,11 @@ class ChartSpec(BaseModel):
     label: str | None = None
     format: dict[str, str] | str = {}
     legend: bool = True
+    aggregate: Literal["sum", "avg", "count", "min", "max"] | None = None
+    palette: Literal["sequential", "diverging"] | None = None
+    midpoint: float | None = Field(default=None, allow_inf_nan=False)
+    x_order: list[str | int | FiniteFloat | bool] | None = None
+    y_order: list[str | int | FiniteFloat | bool] | None = None
     references: list[ReferenceLine] = []
 
     @field_validator("y", mode="before")
@@ -144,3 +158,22 @@ class ChartSpec(BaseModel):
             for column, fmt in v.items():
                 validate_format(fmt, f"format for '{column}'")
         return v
+
+    @field_validator("x_order", "y_order")
+    @classmethod
+    def check_order_integers(cls, order, info):
+        for v in order or []:
+            if isinstance(v, int) and not isinstance(v, bool) and abs(v) > EXACT_IN_BROWSER:
+                raise ValueError(
+                    f"{info.field_name} entry {v} is too big for the browser to match exactly; "
+                    f"quote it as a string: '{v}'"
+                )
+        return order
+
+    @model_validator(mode="after")
+    def check_midpoint(self):
+        if self.midpoint is not None and self.palette != "diverging":
+            raise ValueError(
+                "midpoint is where a diverging palette turns, so it needs palette: diverging"
+            )
+        return self

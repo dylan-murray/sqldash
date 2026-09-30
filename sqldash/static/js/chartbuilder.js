@@ -12,10 +12,12 @@ import {
 } from "/static/js/charts.js";
 import { enhanceSelects } from "/static/js/dropdown.js";
 
-const CHART_TYPES = ["line", "bar", "area", "scatter", "pie", "big_number", "table"];
+const CHART_TYPES = [
+  "line", "bar", "area", "scatter", "pie", "heatmap", "big_number", "table",
+];
 const TYPE_LABELS = {
   line: "Line", bar: "Bar", area: "Area", scatter: "Scatter",
-  pie: "Pie", big_number: "Number", table: "Table",
+  pie: "Pie", heatmap: "Heatmap", big_number: "Number", table: "Table",
 };
 const NUMERIC = new Set(["integer", "float", "decimal"]);
 // Column encodings: filled in from the result for the preview, but only
@@ -63,6 +65,35 @@ function blankReference(kind) {
 function isSet(value) {
   return value != null && !(Array.isArray(value) && !value.length);
 }
+
+function numberInput(value, key, { placeholder = "" } = {}) {
+  const input = document.createElement("input");
+  input.type = "number";
+  input.dataset.spec = key;
+  input.step = "any";
+  input.placeholder = placeholder;
+  input.value = value ?? "";
+  return input;
+}
+
+function optionSelect(options, selected, key) {
+  const select = document.createElement("select");
+  select.dataset.spec = key;
+  for (const [value, text] of options) {
+    const picked = (selected ?? "") === value;
+    select.appendChild(new Option(text, value, picked, picked));
+  }
+  return select;
+}
+
+const AGGREGATES = [
+  ["", "One row each"],
+  ["sum", "Sum"],
+  ["avg", "Average"],
+  ["count", "Count rows"],
+  ["min", "Min"],
+  ["max", "Max"],
+];
 
 function checkbox(checked, key) {
   const box = document.createElement("input");
@@ -208,6 +239,18 @@ export class ChartBuilder {
     } else if (type === "pie") {
       fields.push(["Label", this.columnSelect("label", spec.label)]);
       fields.push(["Value", this.columnSelect("value", spec.value)]);
+    } else if (type === "heatmap") {
+      fields.push(["X axis", this.columnSelect("x", spec.x)]);
+      fields.push(["Y axis", this.columnSelect("y", Array.isArray(spec.y) ? spec.y[0] : spec.y)]);
+      fields.push(["Value", this.columnSelect("value", spec.value)]);
+      fields.push(["Cells", optionSelect(AGGREGATES, spec.aggregate, "aggregate")]);
+      fields.push([
+        "Palette",
+        optionSelect([["", "Sequential"], ["diverging", "Diverging"]], spec.palette, "palette"),
+      ]);
+      if (spec.palette === "diverging") {
+        fields.push(["Midpoint", numberInput(spec.midpoint, "midpoint", { placeholder: "0" })]);
+      }
     } else if (type === "big_number") {
       fields.push(["Value", this.columnSelect("value", spec.value)]);
     }
@@ -237,7 +280,12 @@ export class ChartBuilder {
         this._authored.add(key);
         if (key === "orientation") this._spec.orientation = input.checked ? "horizontal" : null;
         else if (input.type === "checkbox") this._spec[key] = input.checked;
-        else this._spec[key] = input.value || null;
+        else if (input.type === "number") {
+          const n = input.value === "" ? null : Number(input.value);
+          this._spec[key] = Number.isFinite(n) ? n : null;
+        } else this._spec[key] = input.value || null;
+        if (key === "palette" && this._spec.palette !== "diverging") this._spec.midpoint = null;
+        if (key === "palette") this.renderEncodings();
         this.renderPreview();
         this.onChange();
       });

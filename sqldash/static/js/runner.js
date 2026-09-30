@@ -370,9 +370,12 @@ function renderDelta(body, spec, current, previous, label) {
   body.querySelector(".big-number")?.appendChild(el);
 }
 
+const CROSS_FILTER_TYPES = new Set(["line", "bar", "area", "scatter", "pie"]);
+
 function attachCrossFilter(chart, spec, result) {
   chart.off("click");
   const inferred = inferSpec({ ...spec, y: spec.y ? [...spec.y] : spec.y }, result);
+  if (!CROSS_FILTER_TYPES.has(inferred.type)) return;
   const column = inferred.type === "pie" ? inferred.label : inferred.x;
   if (!column) return;
   const select = document.querySelector(

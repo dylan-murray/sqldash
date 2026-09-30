@@ -3039,7 +3039,8 @@ def test_workspace_restore_keeps_the_ticked_dimension_order(page, tmp_path_facto
 def test_workspace_chart_types_each_fit_their_label(page, tmp_path_factory, width):
     """Seven equal-width buttons were narrower than "Number" (and "Scatter" at
     1280), so the label ran under the next button and the active "Table" pill
-    painted over it."""
+    painted over it. With more types than one row holds they form an even
+    grid, never a ragged wrap with one button stretched across a row."""
     root = tmp_path_factory.mktemp("wscharttypes")
     (root / "d.yaml").write_text(
         "title: M\nsource: {type: duckdb, database: ':memory:'}\ntiles: []\n"
@@ -3060,7 +3061,11 @@ def test_workspace_chart_types_each_fit_their_label(page, tmp_path_factory, widt
         rows = frame.eval_on_selector_all(
             "#qb-type .seg-btn", "els => new Set(els.map(e => e.offsetTop)).size"
         )
-        assert rows == 1
+        assert rows <= 2
+        widths = frame.eval_on_selector_all(
+            "#qb-type .seg-btn", "els => els.map(e => e.getBoundingClientRect().width)"
+        )
+        assert max(widths) - min(widths) < 1, widths
     finally:
         _stop_server(server, thread, page)
 

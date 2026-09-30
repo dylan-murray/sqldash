@@ -510,11 +510,23 @@ def _chart_unchanged(current: Tile | None, slim: dict[str, Any]) -> bool:
     if current is None or incoming is None:
         return False
     if current.chart is not None:
-        return incoming == current.chart
+        return _typed(incoming.model_dump()) == _typed(current.chart.model_dump())
     implied = ChartSpec(type=_implied_chart_type(current))
     if current.metric is not None:
         incoming = incoming.model_copy(update={"format": {}})
-    return incoming == implied
+    return _typed(incoming.model_dump()) == _typed(implied.model_dump())
+
+
+def _typed(value: Any) -> Any:
+    """Python counts `True == 1`, but a chart does not: `x_order: [true]` and
+    `x_order: [1]` pin different categories, so compare booleans as their own kind."""
+    if isinstance(value, bool):
+        return ("bool", value)
+    if isinstance(value, dict):
+        return {k: _typed(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_typed(v) for v in value]
+    return value
 
 
 def _same_chart_value(key: str, written: Any, incoming: Any) -> bool:
@@ -524,7 +536,7 @@ def _same_chart_value(key: str, written: Any, incoming: Any) -> bool:
         return ([written] if isinstance(written, str) else written) == (
             [incoming] if isinstance(incoming, str) else incoming
         )
-    return written == incoming
+    return _typed(written) == _typed(incoming)
 
 
 def _shares_yaml(node: Any, seen: set[int] | None = None, ancestors: tuple = ()) -> bool:

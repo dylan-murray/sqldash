@@ -122,6 +122,7 @@ body.editing .tile-actions { opacity: 1; }
 }
 .field .hint { text-transform: none; letter-spacing: 0; font-weight: 450; opacity: 0.8; }
 .field input[type="text"],
+.field input[type="number"],
 .field textarea,
 .field select {
   font: inherit;
@@ -138,9 +139,21 @@ body.editing .tile-actions { opacity: 1; }
 .field select:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
 
 .field-row { display: flex; flex-wrap: wrap; gap: 12px 16px; }
+#qb-type.segmented { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .field-inline { min-width: 130px; }
 .field-inline .check { display: block; font-size: 13px; color: var(--ink-1); }
 .field-inline .check input { accent-color: var(--accent); margin-right: 6px; }
+.field-inline input[type="number"] {
+  display: block;
+  width: 100%;
+  min-width: 96px;
+  height: 34px;
+  padding: 0 15px;
+  border-radius: 999px;
+  box-shadow: var(--shadow-1);
+  font-variant-numeric: tabular-nums;
+}
+.field-inline input[type="number"]::placeholder { color: var(--ink-muted); }
 
 .field-refs { flex: 1 0 100%; min-width: 0; }
 .ref-list { display: flex; flex-direction: column; gap: 8px; }

@@ -288,6 +288,10 @@ table.results td.cell-inspect:focus-visible { outline: 2px solid var(--accent); 
   place-items: center;
   color: var(--ink-muted);
   font-size: 13px;
+  line-height: 1.5;
+  padding: 0 24px;
+  text-align: center;
+  text-wrap: balance;
   pointer-events: none;
 }
 .results-more {

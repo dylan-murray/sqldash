@@ -1,3 +1,5 @@
+import { heatmapOption } from "./heatmap.js";
+
 const NUMERIC_TYPES = new Set(["integer", "float", "decimal"]);
 const TEMPORAL_TYPES = new Set(["date", "timestamp"]);
 
@@ -25,6 +27,10 @@ export function setFormatConfig({ locale, currency } = {}) {
     locale: locale || undefined,
     currency: currency || "USD",
   };
+}
+
+export function formatSettings() {
+  return formatConfig;
 }
 
 function isPlainRecord(value) {
@@ -343,6 +349,9 @@ const TYPE_FIELDS = {
   area: ["x", "y", "group_by", "stacked", "legend", "format", "references"],
   scatter: ["x", "y", "group_by", "legend", "format", "references"],
   pie: ["label", "value", "legend", "format"],
+  heatmap: [
+    "x", "y", "value", "aggregate", "palette", "midpoint", "x_order", "y_order", "legend", "format",
+  ],
   big_number: ["value", "format"],
   table: ["format"],
 };
@@ -353,6 +362,8 @@ export function pruneSpecForType(spec, type) {
   for (const [key, value] of Object.entries(spec)) {
     if (key !== "type" && keep.has(key)) next[key] = value;
   }
+  if (typeof next.y === "string" && type !== "heatmap") next.y = [next.y];
+  if (Array.isArray(next.y) && type === "heatmap") next.y = next.y[0] ?? null;
   return next;
 }
 
@@ -407,10 +418,32 @@ export function inferSpec(spec, result) {
       s.value = (s.y && s.y[0]) ?? firstColOfTypes(result, NUMERIC_TYPES, [s.label]);
     }
   }
+  if (s.type === "heatmap") inferHeatmap(s, result);
   if (s.type === "big_number" && !s.value) {
     s.value = firstColOfTypes(result, NUMERIC_TYPES) ?? result.columns[0]?.name;
   }
   return s;
+}
+
+function inferHeatmap(s, result) {
+  const names = new Set(result.columns.map((c) => c.name));
+  let y = Array.isArray(s.y) ? s.y[0] : s.y;
+  if (y && !names.has(y)) y = null;
+  const taken = new Set([s.x, y, s.value].filter(Boolean));
+  const free = (c) => !taken.has(c.name);
+  const pool = [
+    ...result.columns.filter((c) => !NUMERIC_TYPES.has(c.type) && free(c)),
+    ...result.columns.filter((c) => c.type === "integer" && free(c)),
+  ].map((c) => c.name);
+  if (!s.x) s.x = pool.shift() ?? null;
+  if (!y) y = pool.find((name) => name !== s.x) ?? null;
+  s.y = y;
+  if (!s.value && s.aggregate !== "count") {
+    const numeric = result.columns.filter(
+      (c) => NUMERIC_TYPES.has(c.type) && c.name !== s.x && c.name !== y
+    );
+    s.value = numeric.at(-1)?.name ?? null;
+  }
 }
 
 function pivot(result, xName, yName, groupName) {
@@ -426,12 +459,12 @@ function pivot(result, xName, yName, groupName) {
   return groups;
 }
 
-function seriesFormat(spec, name) {
+export function seriesFormat(spec, name) {
   if (typeof spec.format === "string") return spec.format;
   return (spec.format || {})[name] || "number";
 }
 
-function baseOption(spec, isTemporal, yFormat, compact) {
+export function baseOption(spec, isTemporal, yFormat, compact) {
   const ink2 = cssVar("--ink-2");
   const muted = cssVar("--ink-muted");
   const grid = cssVar("--grid-line");
@@ -484,6 +517,7 @@ function baseOption(spec, isTemporal, yFormat, compact) {
 export function translate(spec, result, forcedColor, height = 0, width = 0) {
   spec = inferSpec(spec, result);
   if (spec.type === "pie") return pieOption(spec, result);
+  if (spec.type === "heatmap") return heatmapOption(spec, result, forcedColor, height);
   return xyOption(spec, result, forcedColor, height, width);
 }
 
@@ -1160,18 +1194,26 @@ export function renderTable(el, spec, result, { page = 0, shown: start = page, o
 }
 
 function plotted(point) {
-  const value = Array.isArray(point) ? point[1] : point?.value;
+  let value = Array.isArray(point) ? point[1] : point?.value;
+  if (Array.isArray(value)) value = value.at(-1);
   return typeof value === "number" && Number.isFinite(value);
+}
+
+const emptyReasons = new WeakMap();
+
+export function setEmptyReason(option, reason) {
+  emptyReasons.set(option, reason);
 }
 
 export function markEmptyChart(body, option) {
   body.querySelector(":scope > .chart-empty")?.remove();
-  const empty = !(option.series || []).some((s) => (s.data || []).some(plotted));
+  const reason = emptyReasons.get(option);
+  const empty = Boolean(reason) || !(option.series || []).some((s) => (s.data || []).some(plotted));
   body.classList.toggle("no-values", empty);
   if (!empty) return;
   const note = document.createElement("div");
   note.className = "chart-empty";
-  note.textContent = "No values to plot";
+  note.textContent = reason ?? "No values to plot";
   body.appendChild(note);
 }
 
