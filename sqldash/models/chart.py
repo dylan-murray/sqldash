@@ -14,7 +14,9 @@ from pydantic import (
     model_validator,
 )
 
-ChartType = Literal["line", "bar", "area", "scatter", "pie", "heatmap", "big_number", "table"]
+ChartType = Literal[
+    "line", "bar", "area", "scatter", "pie", "histogram", "heatmap", "big_number", "table"
+]
 REFERENCE_CHART_TYPES = ("line", "bar", "area", "scatter")
 ReferenceColor = Literal[
     "ink",
@@ -34,6 +36,8 @@ ReferenceColor = Literal[
 NAMED_FORMATS = ("number", "currency", "percent", "compact", "date")
 CURRENCY_CODE = re.compile(r"^[A-Z]{3}$")
 HEATMAP_FIELDS = ("aggregate", "palette", "midpoint", "x_order", "y_order")
+MAX_HISTOGRAM_BINS = 200
+HISTOGRAM_FIELDS = ("bins", "bin_width", "bin_start", "measure")
 EXACT_IN_BROWSER = 2**53 - 1
 IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -135,6 +139,10 @@ class ChartSpec(BaseModel):
     label: str | None = None
     format: dict[str, str] | str = {}
     legend: bool = True
+    bins: int | None = Field(default=None, ge=1, le=MAX_HISTOGRAM_BINS, strict=True)
+    bin_width: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    bin_start: float | None = Field(default=None, allow_inf_nan=False)
+    measure: Literal["count", "percent"] | None = None
     aggregate: Literal["sum", "avg", "count", "min", "max"] | None = None
     palette: Literal["sequential", "diverging"] | None = None
     midpoint: float | None = Field(default=None, allow_inf_nan=False)
@@ -176,4 +184,15 @@ class ChartSpec(BaseModel):
             raise ValueError(
                 "midpoint is where a diverging palette turns, so it needs palette: diverging"
             )
+        return self
+
+    @model_validator(mode="after")
+    def check_binning(self):
+        if self.bins is not None and self.bin_width is not None:
+            raise ValueError(
+                "set bins (how many) or bin_width (how wide), not both; "
+                "they are two ways to say the same thing"
+            )
+        if self.bin_start is not None and self.bin_width is None:
+            raise ValueError("bin_start aligns bin_width edges, so it needs a bin_width")
         return self

@@ -1,4 +1,5 @@
 import { heatmapOption } from "./heatmap.js";
+import { histogramOption } from "./histogram.js";
 
 const NUMERIC_TYPES = new Set(["integer", "float", "decimal"]);
 const TEMPORAL_TYPES = new Set(["date", "timestamp"]);
@@ -352,6 +353,7 @@ const TYPE_FIELDS = {
   heatmap: [
     "x", "y", "value", "aggregate", "palette", "midpoint", "x_order", "y_order", "legend", "format",
   ],
+  histogram: ["x", "bins", "bin_width", "bin_start", "measure", "format"],
   big_number: ["value", "format"],
   table: ["format"],
 };
@@ -419,6 +421,9 @@ export function inferSpec(spec, result) {
     }
   }
   if (s.type === "heatmap") inferHeatmap(s, result);
+  if (s.type === "histogram" && !s.x) {
+    s.x = firstColOfTypes(result, NUMERIC_TYPES) ?? result.columns[0]?.name;
+  }
   if (s.type === "big_number" && !s.value) {
     s.value = firstColOfTypes(result, NUMERIC_TYPES) ?? result.columns[0]?.name;
   }
@@ -517,6 +522,7 @@ export function baseOption(spec, isTemporal, yFormat, compact) {
 export function translate(spec, result, forcedColor, height = 0, width = 0) {
   spec = inferSpec(spec, result);
   if (spec.type === "pie") return pieOption(spec, result);
+  if (spec.type === "histogram") return histogramOption(spec, result, forcedColor, height);
   if (spec.type === "heatmap") return heatmapOption(spec, result, forcedColor, height);
   return xyOption(spec, result, forcedColor, height, width);
 }

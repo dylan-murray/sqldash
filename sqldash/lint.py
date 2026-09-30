@@ -27,7 +27,7 @@ from sqldash.connectors.engine import paramstyle_for
 from sqldash.connectors.engine_urls import DRIVERS, INSTALL_EXTRAS
 from sqldash.execution import ExecutionRegistry
 from sqldash.models.agents import ToolParam
-from sqldash.models.chart import HEATMAP_FIELDS, REFERENCE_CHART_TYPES
+from sqldash.models.chart import HEATMAP_FIELDS, HISTOGRAM_FIELDS, REFERENCE_CHART_TYPES
 from sqldash.models.dashboard import split_page_tokens
 from sqldash.models.source import is_secret_bag_key
 from sqldash.params import (
@@ -862,6 +862,28 @@ def _lint_tiles(
                     f"tile '{tile.id}': a heatmap takes one y column, not {len(tile.chart.y)}",
                 )
             )
+        if tile.chart and tile.chart.type != "histogram":
+            for key in HISTOGRAM_FIELDS:
+                if getattr(tile.chart, key) is not None:
+                    findings.append(
+                        Finding(
+                            file,
+                            "error",
+                            f"tile '{tile.id}': {key} is only valid on histogram charts, "
+                            f"not {tile.chart.type}",
+                        )
+                    )
+        if tile.chart and tile.chart.type == "histogram":
+            for key in ("y", "group_by"):
+                if getattr(tile.chart, key):
+                    findings.append(
+                        Finding(
+                            file,
+                            "error",
+                            f"tile '{tile.id}': a histogram counts the rows of its x column, "
+                            f"so it takes no {key}",
+                        )
+                    )
         if tile.query:
             usage.queries.add(tile.query)
         if tile.metric is None:

@@ -139,7 +139,7 @@ body.editing .tile-actions { opacity: 1; }
 .field select:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
 
 .field-row { display: flex; flex-wrap: wrap; gap: 12px 16px; }
-#qb-type.segmented { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+#qb-type.segmented { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .field-inline { min-width: 130px; }
 .field-inline .check { display: block; font-size: 13px; color: var(--ink-1); }
 .field-inline .check input { accent-color: var(--accent); margin-right: 6px; }
