@@ -283,6 +283,45 @@ def test_sign_in_failures_pause_every_source_of_the_identity(
     assert driver.stats["logins"] == 1
 
 
+def test_a_late_sign_in_failure_is_recorded_once_and_not_replayed(driver, monkeypatch):
+    """A's sign-in outlived SIGNIN_WAIT and then failed. Its result stayed with A,
+    and A's next request claimed it and restarted the shared cooldown, so B, which
+    had since signed in fine, was paused again with A's old error."""
+    monkeypatch.setattr(engine_module, "SIGNIN_WAIT", 0.2)
+    monkeypatch.setattr(engine_module, "SIGNIN_RECHECK", 0.05)
+    monkeypatch.setattr(engine_module, "AUTH_FAILURE_COOLDOWN", 0.5)
+    calls = []
+
+    def connect(**kwargs):
+        calls.append(kwargs.get("warehouse"))
+        if len(calls) == 1:
+            time.sleep(0.4)
+            raise snowflake_errors.DatabaseError(msg="SAML response is invalid.", errno=390190)
+        return FakeConn()
+
+    monkeypatch.setattr(snowflake_connector, "connect", connect)
+    a = engine_module.build_engine(source(warehouse="A"), None)
+    b = engine_module.build_engine(source(warehouse="B"), None)
+    try:
+        with pytest.raises(ConnectorError, match="waiting for you to sign in"):
+            a.raw_connection()
+        time.sleep(0.3)
+        with pytest.raises(ConnectorError, match="attempts paused"):
+            b.raw_connection()
+        time.sleep(0.6)
+        first_b = b.raw_connection()
+        a.raw_connection().close()
+        start = time.monotonic()
+        second_b = b.raw_connection()
+        assert time.monotonic() - start < 0.5
+        first_b.close()
+        second_b.close()
+        assert calls == ["A", "B", "A", "B"]
+    finally:
+        a.dispose()
+        b.dispose()
+
+
 def test_the_memo_follows_the_connector_when_it_drops_an_expired_token(keychain, monkeypatch):
     monkeypatch.setattr(snowflake_tokens, "USES_KEYCHAIN", True)
     snowflake_tokens.remember_snowflake_tokens()

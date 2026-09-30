@@ -644,6 +644,7 @@ class SignInGate:
         self.inflight: SignInAttempt | None = None
 
     def fail(self, exc: BaseException, local: Cooldown) -> ConnectorError:
+        """Record a failure at the moment it happens; nothing records it again later."""
         message = str(exc)
         if "differs from the user currently logged in" in message:
             message = (
@@ -670,6 +671,7 @@ class SignInAttempt(threading.Thread):
         self.orphaned = False
         self.conn = None
         self.error: Exception | None = None
+        self.failure: ConnectorError | None = None
 
     def abandoned(self) -> bool:
         """A sign-in nobody will finish (tab closed) must not block retries until
@@ -681,13 +683,16 @@ class SignInAttempt(threading.Thread):
             self.conn = self.login()
         except Exception as exc:
             self.error = exc
+            if not self.orphaned:
+                self.failure = self.gate.fail(exc, self.local)
+        else:
+            self.gate.cooldown.clear()
+            self.local.clear()
         finally:
             self.done.set()
         with self.gate.lock:
             if self.gate.inflight is self:
                 self.gate.inflight = None
-            if not self.orphaned and self.error is not None:
-                self.gate.fail(self.error, self.local)
             unclaimed = self.orphaned and self.conn is not None
         if unclaimed:
             with contextlib.suppress(Exception):
@@ -755,9 +760,7 @@ def build_engine(source: "Source", base_dir: Path | None) -> "Engine":
         def claim(attempt):
             mine["attempt"] = None
             if attempt.error is not None:
-                raise gate.fail(attempt.error, local) from attempt.error
-            gate.cooldown.clear()
-            local.clear()
+                raise (attempt.failure or ConnectorError(str(attempt.error))) from attempt.error
             return attempt.conn
 
         def connect():
@@ -773,7 +776,9 @@ def build_engine(source: "Source", base_dir: Path | None) -> "Engine":
                 if attempt is not None and attempt.orphaned:
                     mine["attempt"] = attempt = None
                 if attempt is not None and attempt.done.is_set():
-                    return claim(attempt)
+                    mine["attempt"] = None
+                    if attempt.error is None:
+                        return claim(attempt)
                 gate.cooldown.check()
                 local.check()
                 if not browser:
@@ -793,8 +798,7 @@ def build_engine(source: "Source", base_dir: Path | None) -> "Engine":
                         raise ConnectorError(SIGNIN_PENDING)
                     if inflight is mine["attempt"]:
                         return claim(inflight)
-                    if inflight.error is not None and signin_failed(inflight.error):
-                        raise gate.fail(inflight.error, local) from inflight.error
+                    gate.cooldown.check()
                 attempt = mine["attempt"] = gate.inflight = SignInAttempt(gate, local, login)
                 attempt.start()
                 if not attempt.done.wait(SIGNIN_WAIT):
