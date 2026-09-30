@@ -18,12 +18,23 @@ import threading
 
 import keyring
 from keyring.backend import KeyringBackend
+from snowflake.connector import token_cache
 from snowflake.connector.compat import IS_MACOS
-from snowflake.connector.token_cache import KeyringTokenCache
 
-SERVICE = KeyringTokenCache.SERVICE_NAME
+DEFAULT_SERVICE = "com.snowflake.connector.python"
 USES_KEYCHAIN = IS_MACOS
 _install_lock = threading.Lock()
+
+
+def snowflake_service() -> str:
+    """The keyring service the connector stores tokens under, looked up when used.
+
+    Read at import time, a connector whose cache class names it differently (or not
+    at all) failed every externalbrowser source, on every platform, before connecting.
+    """
+    cache = getattr(token_cache, "KeyringTokenCache", None)
+    service = getattr(cache, "SERVICE_NAME", None)
+    return service if isinstance(service, str) and service else DEFAULT_SERVICE
 
 
 class SnowflakeTokenMemo(KeyringBackend):
@@ -34,7 +45,7 @@ class SnowflakeTokenMemo(KeyringBackend):
         self._tokens: dict[str, str] = {}
 
     def get_password(self, service: str, username: str) -> str | None:
-        if service != SERVICE:
+        if service != snowflake_service():
             return self.inner.get_password(service, username)
         with self._lock:
             token = self._tokens.get(username)
@@ -45,7 +56,7 @@ class SnowflakeTokenMemo(KeyringBackend):
             return token
 
     def set_password(self, service: str, username: str, password: str) -> None:
-        if service != SERVICE:
+        if service != snowflake_service():
             self.inner.set_password(service, username, password)
             return
         with self._lock:
@@ -53,7 +64,7 @@ class SnowflakeTokenMemo(KeyringBackend):
             self._tokens[username] = password
 
     def delete_password(self, service: str, username: str) -> None:
-        if service != SERVICE:
+        if service != snowflake_service():
             self.inner.delete_password(service, username)
             return
         with self._lock:

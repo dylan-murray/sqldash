@@ -12,7 +12,8 @@ Snowflake authenticates through ``creator=`` (never URL auth). A lock per
 connection attempts so externalbrowser SSO opens at most one browser tab per serve
 session whatever role, warehouse or dashboard asked, and an auth failure pauses
 further attempts for that identity for a cooldown rather than opening one tab per
-pooled connection. An externalbrowser pool has no overflow, and the connector's
+pooled connection. A failure specific to one source (a role, warehouse or database
+it cannot use) pauses only that source. An externalbrowser pool has no overflow, and the connector's
 Keychain token is kept in memory after the first read (``snowflake_tokens``), so
 later sessions do not go back to the Keychain. A browser sign-in
 runs off the request thread with a bounded wait: the driver waits for the SSO
@@ -96,6 +97,22 @@ SNOWFLAKE_TIMEOUT = (
 )
 SNOWFLAKE_SESSION_GONE = frozenset({390111, 390112, 390114})
 SNOWFLAKE_CONNECTION_CLOSED = 250002
+SNOWFLAKE_SOURCE_ERRNOS = frozenset({390189, 390201, 390202, 390203})
+SNOWFLAKE_SIGNIN_ERRNOS = frozenset(
+    {250006, 250008, 250009, 251005, 251006, 251008, 251010, 251011, 251014, 251015, 251016}
+)
+SNOWFLAKE_SIGNIN_MARKERS = (
+    "differs from the user currently logged in",
+    "saml",
+    "identity provider",
+    "idp",
+    "incorrect username or password",
+    "authenticat",
+    "browser",
+    "sign-in",
+    "sign in",
+    "cancel",
+)
 SNOWFLAKE_RELOGIN = re.compile(r"\s*New login required to access the service\.")
 SNOWFLAKE_SESSION_ENDED = (
     " Snowflake ended this session on the server (it was aborted or expired); "
@@ -565,36 +582,22 @@ def _effective_driver(source: "Source") -> str:
     return _BARE_DIALECT_DRIVER.get(name, "")
 
 
-class SignInGate:
-    """Login state one Snowflake identity shares across every engine in the process.
+class Cooldown:
+    """Pause further login attempts for a while after one failed, so SSO does not
+    open a browser tab per pooled connection."""
 
-    Engines are cached per source config, so each role, warehouse and database a
-    user picks, each warehouse-fallback probe and each dashboard directory gets its
-    own. When the lock, the pending sign-in and the failure cooldown lived in the
-    engine, every one of them raced its own browser sign-in and Keychain read. Keyed
-    on (account, user, authenticator), they wait for the one sign-in in flight.
-    """
-
-    def __init__(self, user: Any) -> None:
-        self.lock = threading.Lock()
-        self.user = user
+    def __init__(self) -> None:
         self.failed_at = 0.0
         self.failure: str | None = None
-        self.inflight: SignInAttempt | None = None
 
-    def fail(self, exc: BaseException) -> ConnectorError:
-        message = str(exc)
-        if "differs from the user currently logged in" in message:
-            message = (
-                f"{message}\n\nattempted user: {self.user!r} — the "
-                "'username' in your source/profile must exactly match the "
-                "account you sign in with at your IdP (usually your work email)."
-            )
+    def record(self, message: str) -> None:
         self.failed_at = time.monotonic()
         self.failure = message
-        return ConnectorError(message)
 
-    def check_cooldown(self) -> None:
+    def clear(self) -> None:
+        self.failure = None
+
+    def check(self) -> None:
         if self.failure and time.monotonic() - self.failed_at < AUTH_FAILURE_COOLDOWN:
             raise ConnectorError(
                 self.failure + "\n(auth just failed — further attempts paused for "
@@ -603,14 +606,64 @@ class SignInGate:
             )
 
 
+def signin_failed(exc: BaseException) -> bool:
+    """Whether a Snowflake login failed on who the user is, not on what the source asked for.
+
+    Only these pause every source of the identity. A role, warehouse or database the
+    user cannot use is one source's problem: sharing it rejected healthy dashboards
+    with another dashboard's role error.
+    """
+    exc = getattr(exc, "orig", None) or exc
+    errno = getattr(exc, "errno", None)
+    message = str(exc).lower()
+    if errno in SNOWFLAKE_SOURCE_ERRNOS or "does not exist or not authorized" in message:
+        return False
+    if errno in SNOWFLAKE_SIGNIN_ERRNOS:
+        return True
+    if isinstance(errno, int) and 390000 <= errno < 391000:
+        return True
+    return any(marker in message for marker in SNOWFLAKE_SIGNIN_MARKERS)
+
+
+class SignInGate:
+    """Login state one Snowflake identity shares across every engine in the process.
+
+    Engines are cached per source config, so each role, warehouse and database a
+    user picks, each warehouse-fallback probe and each dashboard directory gets its
+    own. When the lock, the pending sign-in and the failure cooldown lived in the
+    engine, every one of them raced its own browser sign-in and Keychain read. Keyed
+    on (account, user, authenticator), they wait for the one sign-in in flight, and
+    a failed sign-in pauses all of them. A failure specific to one source pauses
+    only that source's own cooldown.
+    """
+
+    def __init__(self, user: Any) -> None:
+        self.lock = threading.Lock()
+        self.user = user
+        self.cooldown = Cooldown()
+        self.inflight: SignInAttempt | None = None
+
+    def fail(self, exc: BaseException, local: Cooldown) -> ConnectorError:
+        message = str(exc)
+        if "differs from the user currently logged in" in message:
+            message = (
+                f"{message}\n\nattempted user: {self.user!r} — the "
+                "'username' in your source/profile must exactly match the "
+                "account you sign in with at your IdP (usually your work email)."
+            )
+        (self.cooldown if signin_failed(exc) else local).record(message)
+        return ConnectorError(message)
+
+
 class SignInAttempt(threading.Thread):
     """One login, off the request thread, so a browser sign-in nobody completes
     cannot hold a request (and the gate's lock) forever: the driver waits for the
     SSO callback with no timeout of its own."""
 
-    def __init__(self, gate: SignInGate, login: Callable[[], Any]) -> None:
+    def __init__(self, gate: SignInGate, local: Cooldown, login: Callable[[], Any]) -> None:
         super().__init__(daemon=True, name="snowflake-signin")
         self.gate = gate
+        self.local = local
         self.login = login
         self.done = threading.Event()
         self.started = time.monotonic()
@@ -634,7 +687,7 @@ class SignInAttempt(threading.Thread):
             if self.gate.inflight is self:
                 self.gate.inflight = None
             if not self.orphaned and self.error is not None:
-                self.gate.fail(self.error)
+                self.gate.fail(self.error, self.local)
             unclaimed = self.orphaned and self.conn is not None
         if unclaimed:
             with contextlib.suppress(Exception):
@@ -693,6 +746,7 @@ def build_engine(source: "Source", base_dir: Path | None) -> "Engine":
             remember_snowflake_tokens()
             common["max_overflow"] = 0
         gate = signin_gate(kwargs)
+        local = Cooldown()
         mine: dict[str, SignInAttempt | None] = {"attempt": None}
 
         def login():
@@ -701,8 +755,9 @@ def build_engine(source: "Source", base_dir: Path | None) -> "Engine":
         def claim(attempt):
             mine["attempt"] = None
             if attempt.error is not None:
-                raise gate.fail(attempt.error) from attempt.error
-            gate.failure = None
+                raise gate.fail(attempt.error, local) from attempt.error
+            gate.cooldown.clear()
+            local.clear()
             return attempt.conn
 
         def connect():
@@ -719,13 +774,15 @@ def build_engine(source: "Source", base_dir: Path | None) -> "Engine":
                     mine["attempt"] = attempt = None
                 if attempt is not None and attempt.done.is_set():
                     return claim(attempt)
-                gate.check_cooldown()
+                gate.cooldown.check()
+                local.check()
                 if not browser:
                     try:
                         conn = login()
                     except Exception as exc:
-                        raise gate.fail(exc) from exc
-                    gate.failure = None
+                        raise gate.fail(exc, local) from exc
+                    gate.cooldown.clear()
+                    local.clear()
                     return conn
                 inflight = gate.inflight
                 if inflight is not None and inflight.abandoned():
@@ -736,9 +793,9 @@ def build_engine(source: "Source", base_dir: Path | None) -> "Engine":
                         raise ConnectorError(SIGNIN_PENDING)
                     if inflight is mine["attempt"]:
                         return claim(inflight)
-                    if inflight.error is not None:
-                        raise gate.fail(inflight.error) from inflight.error
-                attempt = mine["attempt"] = gate.inflight = SignInAttempt(gate, login)
+                    if inflight.error is not None and signin_failed(inflight.error):
+                        raise gate.fail(inflight.error, local) from inflight.error
+                attempt = mine["attempt"] = gate.inflight = SignInAttempt(gate, local, login)
                 attempt.start()
                 if not attempt.done.wait(SIGNIN_WAIT):
                     raise ConnectorError(SIGNIN_PENDING)
