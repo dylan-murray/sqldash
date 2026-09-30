@@ -14,6 +14,7 @@ from pydantic import (
 )
 
 from sqldash.models.chart import ChartSpec, validate_format
+from sqldash.models.drill import DrillSpec
 from sqldash.models.semantics import Grain, MetricDef, MetricRef, RelationDef, validate_name
 from sqldash.models.source import (
     DEFAULT_MARK,
@@ -212,6 +213,7 @@ class Tile(BaseModel):
     chart: ChartSpec | None = None
     format: str | dict[str, str] | None = None
     markdown: str | None = None
+    drill: DrillSpec | None = None
 
     @field_validator("metric", mode="before")
     @classmethod
@@ -245,6 +247,8 @@ class Tile(BaseModel):
                 )
         if self.type == "text" and self.markdown is None:
             raise ValueError(f"tile '{label}': text tiles require 'markdown'")
+        if self.type == "text" and self.drill is not None:
+            raise ValueError(f"tile '{label}': 'drill' needs a chart or table tile to click")
         if self.grain is not None:
             if self.metric is None:
                 raise ValueError(f"tile '{label}': 'grain' requires a 'metric'")

@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from sqldash.models.dashboard import Dashboard
 from sqldash.models.source import redact_source
 from sqldash.params import filter_ui_default
+from sqldash.project.drill import plan_drills
+from sqldash.project.store import Store
 
 if TYPE_CHECKING:
     from sqldash.semantics import SemanticLayer
@@ -52,9 +54,14 @@ def _jsonable(value: Any) -> Any:
 
 
 def client_payload(
-    name: str, dashboard: Dashboard, etag: str, layer: "SemanticLayer | None" = None
+    name: str,
+    dashboard: Dashboard,
+    etag: str,
+    layer: "SemanticLayer | None" = None,
+    store: Store | None = None,
 ) -> dict:
-    """Dashboard JSON for the browser, with sources redacted and metric formats attached."""
+    """Dashboard JSON for the browser, with sources redacted and metric formats attached.
+    With the store, each drill tile also gets the resolved plan its links are built from."""
     data = dashboard.model_dump(mode="json", exclude={"source", "sources"})
     data["source"] = redact_source(dashboard.source)
     data["sources"] = {k: redact_source(v) for k, v in dashboard.sources.items()}
@@ -75,4 +82,7 @@ def client_payload(
     # `today` is the server's date, the same one `resolved_default` was resolved
     # against. The filter bar resolves presets against it instead of the client
     # clock, whose UTC date can be a different day (#673).
-    return {"name": name, "etag": etag, "today": date.today().isoformat(), "dashboard": data}
+    payload = {"name": name, "etag": etag, "today": date.today().isoformat(), "dashboard": data}
+    if store is not None:
+        payload["drills"] = plan_drills(store, name, dashboard)
+    return payload

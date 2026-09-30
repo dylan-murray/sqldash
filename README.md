@@ -235,7 +235,7 @@ tools, response instructions, and grading details.
 
 The full documentation lives at [sqldash.dev/docs](https://sqldash.dev/docs/). These guides are also in the repo:
 
-- [Dashboard files](docs/dashboard-file.md) — charts, filters, layouts, connections, and profiles.
+- [Dashboard files](docs/dashboard-file.md) — charts, filters, drill-down, layouts, connections, and profiles.
 - [Metrics](docs/semantic-layer.md) — shared definitions, MCP tools, and BI interoperability.
 - [Agents](docs/agents.md) — prompts, data tools, and evals.
 - [Studio](docs/studio.md) — pins, agent entrypoints, approvals, conversation, and undo.

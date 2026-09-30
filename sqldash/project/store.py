@@ -15,7 +15,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 from ruamel.yaml.composer import ComposerError
@@ -33,6 +33,7 @@ from sqldash.models.dashboard import (
     derive_tile_ids,
     slugify,
 )
+from sqldash.models.drill import DrillSpec
 from sqldash.models.semantics import MetricRef
 from sqldash.models.source import (
     DEFAULT_MARK,
@@ -465,6 +466,47 @@ def _set_position(target: Any, pos: dict[str, int]) -> None:
 
 def _same_text(a: Any, b: Any) -> bool:
     return isinstance(a, str) and isinstance(b, str) and a.strip() == b.strip()
+
+
+def _drill_node(value: Any) -> Any:
+    """A tile's `drill:` in its tersest form: a bare dashboard name when it maps
+    nothing, otherwise a block with each `{filter: name}` on one line."""
+    spec = DrillSpec.model_validate(value)
+    if spec.dashboard and not spec.filters and spec.column is None and not spec.new_tab:
+        return spec.dashboard
+    node = CommentedMap()
+    if spec.dashboard:
+        node["dashboard"] = spec.dashboard
+    if spec.filters:
+        node["filters"] = CommentedMap(
+            (key, v if isinstance(v, str) else _flow(v.model_dump()))
+            for key, v in spec.filters.items()
+        )
+    if spec.column:
+        node["column"] = spec.column
+    if spec.new_tab:
+        node["new_tab"] = True
+    return node
+
+
+def _in_order(value: Any) -> Any:
+    """A model or mapping as nested (key, value) pairs, so equality sees key
+    order: the first mapping entry decides which column a click reads."""
+    if isinstance(value, BaseModel):
+        value = value.model_dump()
+    if isinstance(value, dict):
+        return [(k, _in_order(v)) for k, v in value.items()]
+    return value
+
+
+def _replace_key(mapping: CommentedMap, key: str, value: Any) -> None:
+    """Set, or for None delete, a key through the writers that carry the
+    comment lines after its old value over to whatever now comes next."""
+    if value is None:
+        if key in mapping:
+            _delete_key(mapping, key)
+    else:
+        _put_key(mapping, key, value)
 
 
 def _tile_model(raw: CommentedMap) -> Tile | None:
@@ -900,6 +942,13 @@ def _edit_tile_in_place(
         if "chart" in existing:
             _delete_key(existing, "chart")
         superseded.add("format")
+
+    if incoming_type == "text" and "drill" not in tile:
+        _replace_key(existing, "drill", None)
+    if "drill" in tile:
+        wanted = None if tile["drill"] is None else DrillSpec.model_validate(tile["drill"])
+        if current is None or _in_order(current.drill) != _in_order(wanted):
+            _replace_key(existing, "drill", None if wanted is None else _drill_node(tile["drill"]))
 
     wrote_position = False
     pos = tile.get("position")
@@ -1484,10 +1533,13 @@ class DashboardStore(Store):
                 "position",
                 "chart",
                 "markdown",
+                "drill",
             ):
                 if key in tile:
                     ordered[key] = tile[key]
             clean = {k: v for k, v in ordered.items() if v is not None}
+            if "drill" in clean:
+                clean["drill"] = _drill_node(clean["drill"])
             if clean.get("type") == "chart":
                 del clean["type"]
             if clean.get("id") and clean.get("title") and clean["id"] == slugify(clean["title"]):

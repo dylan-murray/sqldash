@@ -1266,7 +1266,12 @@ export const RESULT_PAGE = 250;
 // `page` renders that many rows (or `shown`, if more were already revealed) and
 // offers more on demand. Sorting still sees every row. `onRows` runs after each
 // body render, for callers that decorate rows.
-export function renderTable(el, spec, result, { page = 0, shown: start = page, onRows } = {}) {
+export function renderTable(
+  el,
+  spec,
+  result,
+  { page = 0, shown: start = page, onRows, onCell } = {}
+) {
   closeCellPop();
   let shown = page ? Math.max(start, page) : Infinity;
   el.innerHTML = "";
@@ -1327,6 +1332,7 @@ export function renderTable(el, spec, result, { page = 0, shown: start = page, o
             inspect(e);
           }
         });
+        onCell?.(td, row, i);
         tr.appendChild(td);
       });
       tbody.appendChild(tr);

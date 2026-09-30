@@ -9,6 +9,10 @@
 }</style>{% endif %}
 {% endblock %}
 {% block topbar %}
+{% if drill_from %}
+<span class="crumb">/</span>
+<a class="crumb-link" id="drill-back" href="{{ drill_from.href }}" title="Back to {{ drill_from.title }}"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 4 3 7.5 6.5 11"/><path d="M3.5 7.5H10a3 3 0 0 1 0 6H8.5"/></svg><span>{{ drill_from.title }}</span></a>
+{% endif %}
 <span class="crumb">/</span>
 <span class="page-title" id="topbar-title">{{ dashboard.title }}</span>
 {% endblock %}
@@ -98,8 +102,8 @@
     </div>
     {% elif f.type == "select" %}
     <select id="filter-{{ f.name }}" data-filter="{{ f.name }}"{% if f.options_sql %} data-options-sql="1"{% if f.resolved_default and f.resolved_default != 'all' %} data-default="{{ f.resolved_default }}"{% endif %}{% endif %}>
-      {% for opt in f.options or (["all"] if f.options_sql else []) %}
-      <option value="{{ opt }}" {% if opt == f.resolved_default %}selected{% endif %}>{{ opt }}</option>
+      {% for opt, kind in f.choices or ([("all", "string")] if f.options_sql else []) %}
+      <option value="{{ opt }}" {% if opt == f.resolved_default %}selected {% endif %}data-kind="{{ kind }}">{{ opt }}</option>
       {% endfor %}
     </select>
     {% elif f.type == "date" %}

@@ -12,6 +12,18 @@ import {
   translate,
   undrawnReferences,
 } from "/static/js/charts.js";
+import {
+  chartKeys,
+  drillUrl,
+  followDrill,
+  initDrillCrumb,
+  markDrillTile,
+  matchOption,
+  refreshDrillLinks,
+  rowForPoint,
+  tableDrillCells,
+  valueKind,
+} from "/static/js/drill.js";
 import { paramNamesIn } from "/static/js/params.js";
 import { compareWindow, currentThenPrevious, presetRange } from "/static/js/period.js";
 import { looksLikeSourceFailure } from "/static/js/sourceerror.js";
@@ -33,6 +45,7 @@ export const tileResults = new Map();
 export const tilePrevResults = new Map();
 export const tileExecutions = new Map();
 export const tileReferenceValues = new Map();
+const drillPlans = new Map(Object.entries(data.drills ?? {}));
 
 let etag = data.etag;
 export const getEtag = () => etag;
@@ -189,8 +202,16 @@ export function renderTile(el, tile, result, previous = null) {
     charts.get(tile.id)?.dispose();
     charts.delete(tile.id);
     body.innerHTML = "";
-    (spec.type === "big_number" ? renderBigNumber : renderTable)(body, spec, result);
-    if (spec.type === "big_number") markTruncated(body, result);
+    const plan = drillPlan(tile.id);
+    if (spec.type === "big_number") renderBigNumber(body, spec, result);
+    else {
+      const cells = tableDrillCells(plan, result, drillContext, (m) => toast(m, "error"));
+      renderTable(body, spec, result, { onCell: cells, onRows: cells?.onRows });
+    }
+    if (spec.type === "big_number") {
+      markTruncated(body, result);
+      attachBigNumberDrill(body, tile, spec, result);
+    }
     if (spec.type === "big_number" && previous && metricHasTime(tile)) {
       renderDelta(body, spec, result, previous, compareLabel);
     }
@@ -224,7 +245,11 @@ export function renderTile(el, tile, result, previous = null) {
   const option = styleCompareSeries(translate(spec, result, forced, mount.clientHeight, mount.clientWidth));
   chart.setOption(option, { notMerge: true });
   markEmptyChart(body, option);
-  attachCrossFilter(chart, spec, result);
+  if (drillPlan(tile.id)) attachDrill(chart, mount, tile, spec, result);
+  else {
+    resetChartKeys(mount);
+    attachCrossFilter(chart, spec, result);
+  }
   // A truncated table says so; a truncated chart just drew a shorter line, and
   // a line that stops early reads as the data ending rather than the row cap.
   // Same note renderTable uses, so the two agree about the same result.
@@ -314,13 +339,17 @@ function mergeCompareResult(spec, current, previous, mode) {
   const merged = {
     columns: [...current.columns, { name: "__period", type: "string" }],
     rows: [],
+    unshifted: [],
     row_count: 0,
     truncated: current.truncated || previous.truncated,
   };
   const timeIdx = current.columns.findIndex(
     (c) => c.type === "timestamp" || c.type === "date"
   );
-  for (const row of current.rows) merged.rows.push([...row, "current"]);
+  for (const row of current.rows) {
+    merged.rows.push([...row, "current"]);
+    merged.unshifted.push(merged.rows.at(-1));
+  }
   for (const row of previous.rows) {
     const shifted = [...row];
     if (timeIdx >= 0 && shifted[timeIdx] != null) {
@@ -338,6 +367,7 @@ function mergeCompareResult(spec, current, previous, mode) {
       shifted[timeIdx] = cur.toISOString().slice(0, 10);
     }
     merged.rows.push([...shifted, "previous"]);
+    merged.unshifted.push([...row, "previous"]);
   }
   merged.row_count = merged.rows.length;
   return merged;
@@ -369,6 +399,87 @@ function renderDelta(body, spec, current, previous, label) {
   el.className = `bn-delta ${delta >= 0 ? "up" : "down"}`;
   el.textContent = `${delta >= 0 ? "▲" : "▼"} ${(Math.abs(delta) * 100).toFixed(1)}% vs ${label}`;
   body.querySelector(".big-number")?.appendChild(el);
+}
+
+export function drillPlan(tileId) {
+  return drillPlans.get(tileId) ?? null;
+}
+
+function filterKinds() {
+  const kinds = {};
+  for (const select of document.querySelectorAll(".filter-bar select[data-filter]")) {
+    const kind = select.selectedOptions[0]?.dataset.kind;
+    if (kind) kinds[select.dataset.filter] = kind;
+  }
+  return kinds;
+}
+
+function drillContext() {
+  return { dashboardName, filters: filterValues(), kinds: filterKinds(), search: location.search };
+}
+
+function drillFromPoint(plan, spec, result, point, event) {
+  if (plan.errors.length) {
+    toast(plan.errors[0], "error");
+    return;
+  }
+  const drawn = rowForPoint(spec, result, point);
+  const row = result.unshifted?.[result.rows.indexOf(drawn)] ?? drawn;
+  const { href, error } = drillUrl(plan, row, result.columns, drillContext());
+  if (!href) {
+    toast(error, "error");
+    return;
+  }
+  followDrill(plan, href, Boolean(event?.metaKey || event?.ctrlKey));
+}
+
+function attachDrill(chart, mount, tile, spec, result) {
+  const plan = drillPlan(tile.id);
+  chart.off("click");
+  chart.on("click", (params) => {
+    if (params.componentType !== "series") return;
+    drillFromPoint(plan, spec, result, params, params.event?.event);
+  });
+  const what = tile.title || "this chart";
+  chartKeys(
+    mount,
+    chart,
+    `${what}. Arrow keys pick a point, Enter opens ${plan.title}`,
+    (point, event) => drillFromPoint(plan, spec, result, point, event)
+  );
+}
+
+function resetChartKeys(mount) {
+  mount.removeAttribute("tabindex");
+  mount.removeAttribute("role");
+  mount.removeAttribute("aria-label");
+  mount.onkeydown = null;
+  mount.onblur = null;
+}
+
+function attachBigNumberDrill(body, tile, spec, result) {
+  const plan = drillPlan(tile.id);
+  const box = body.querySelector(".big-number");
+  if (!plan || !box) return;
+  box.classList.add("is-drill");
+  box.tabIndex = 0;
+  box.setAttribute("role", "link");
+  box.setAttribute("aria-label", `Open ${plan.title}`);
+  const go = (event) => drillFromPoint(plan, spec, result, { dataIndex: 0 }, event);
+  box.addEventListener("click", go);
+  box.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      go(e);
+    }
+  });
+}
+
+export function markDrillTiles() {
+  for (const tile of dashboard.tiles) {
+    const el = document.querySelector(`.tile[data-tile-id="${CSS.escape(tile.id)}"]`);
+    if (el) markDrillTile(el, drillPlan(tile.id));
+  }
 }
 
 const CROSS_FILTER_TYPES = new Set(["line", "bar", "area", "scatter", "pie"]);
@@ -680,6 +791,7 @@ function queueFilterRun(paramName) {
     }
     pendingParams.clear();
     syncFiltersToUrl();
+    refreshDrillLinks();
     runTiles([...affected.values()]);
   }, 60);
 }
@@ -694,13 +806,40 @@ function syncFiltersToUrl() {
   history.replaceState(null, "", url);
 }
 
+function filterLabel(bind) {
+  const f = dashboard.filters.find(
+    (d) => d.name === bind || (d.bind && Object.values(d.bind).includes(bind))
+  );
+  return f?.label || f?.name || bind;
+}
+
+function refuseUrlValue(bind, value) {
+  const label = filterLabel(bind);
+  toast(`${label} has no '${value}' to filter to, so it is showing its default`, "error");
+}
+
+function selectOptions(select) {
+  return [...select.options].map((o) => ({ value: o.value, kind: o.dataset.kind || "string" }));
+}
+
+function selectValue(select, value) {
+  return matchOption(selectOptions(select), value, null) ?? value;
+}
+
 export function applyFiltersFromUrl() {
   const params = new URLSearchParams(location.search);
   let any = false;
   for (const input of document.querySelectorAll(".filter-bar [data-filter]")) {
-    const value = params.get(`f_${input.dataset.filter}`);
+    const asked = params.get(`f_${input.dataset.filter}`);
+    const value = asked !== null && input.tagName === "SELECT" ? selectValue(input, asked) : asked;
     if (value !== null && value !== input.value) {
+      const before = input.value;
       input.value = value;
+      if (input.value !== value && !input.dataset.optionsSql) {
+        input.value = before;
+        refuseUrlValue(input.dataset.filter, value);
+        continue;
+      }
       any = true;
     }
   }
@@ -732,17 +871,20 @@ async function loadFilterOptions() {
         }
       }
       const authored = select.dataset.default;
-      const desired =
-        new URLSearchParams(location.search).get(`f_${name}`) ??
-        (authored || select.value);
+      const asked = new URLSearchParams(location.search).get(`f_${name}`);
+      const desired = asked ?? (authored || select.value);
       select.innerHTML = "";
+      const kind = valueKind(result.columns[0]?.type);
       for (const v of ["all", ...values]) {
         const opt = document.createElement("option");
         opt.value = v;
+        opt.dataset.kind = v === "all" ? "string" : kind;
         opt.textContent = v;
         select.appendChild(opt);
       }
-      if ([...select.options].some((o) => o.value === desired)) select.value = desired;
+      const option = matchOption(selectOptions(select), desired, null);
+      if (option !== undefined) select.value = option;
+      else if (asked !== null) refuseUrlValue(name, asked);
       if (select.value !== "all" ) {
         select.dispatchEvent(new Event("change", { bubbles: true }));
       }
@@ -795,8 +937,13 @@ export function initFilters() {
       const inputs = control.querySelectorAll(".dr-date");
       const params = new URLSearchParams(location.search);
       if ([...inputs].some((i) => params.has(`f_${i.dataset.filter}`))) {
-        preset.value = "custom";
-        inputs.forEach((i) => (i.hidden = false));
+        const [start, end] = [...inputs].map((i) => i.value);
+        const same = [...preset.options].find((o) => {
+          const range = presetRange(o.value, serverToday);
+          return range && range.start === start && range.end === end;
+        });
+        preset.value = same ? same.value : "custom";
+        inputs.forEach((i) => (i.hidden = Boolean(same)));
       }
     });
   }
@@ -815,6 +962,8 @@ export function replaceDashboard(next) {
   // nosemgrep: insecure-object-assign
   Object.assign(dashboard, next.dashboard);
   setEtag(next.etag);
+  drillPlans.clear();
+  for (const [id, plan] of Object.entries(next.drills ?? {})) drillPlans.set(id, plan);
   if (next.today) serverToday = next.today;
   setFormatConfig({ locale: dashboard.locale, currency: dashboard.currency });
   configureRefresh();
@@ -847,5 +996,7 @@ function configureRefresh() {
 configureRefresh();
 
 applyTileHues();
+markDrillTiles();
+initDrillCrumb();
 
 import("/static/js/dropdown.js").then(({ enhanceSelects }) => enhanceSelects());

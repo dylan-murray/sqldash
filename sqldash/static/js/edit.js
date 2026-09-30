@@ -4,6 +4,7 @@ import {
   initFilters,
   applyTileHues,
   dashboard,
+  markDrillTiles,
   mutatingHeaders,
   dashboardName,
   disposeTile,
@@ -516,6 +517,7 @@ export async function refreshDashboard() {
     const { enhanceSelects } = await import("/static/js/dropdown.js");
     enhanceSelects(filters);
     applyTileHues();
+    markDrillTiles();
     applyMode();
     runTiles(dashboard.tiles);
     window.dispatchEvent(new CustomEvent("sqldash:dashboard-refreshed"));

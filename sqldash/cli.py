@@ -1365,7 +1365,9 @@ def lint(
         checked_files: set[str] = set()
         for repo, repo_store in store.repos.items():
             repo_layer = layer.layers[repo]
-            repo_findings = lint_project(repo_store, repo_layer, check_sql=strict)
+            repo_findings = lint_project(
+                repo_store, repo_layer, check_sql=strict, workspace=store, repo=repo
+            )
             findings.extend(Finding(f"{repo}/{f.file}", f.level, f.message) for f in repo_findings)
             checked_files.update(
                 f"{repo}/{name}" for name in _lint_checked_files(repo_store, repo_layer)
