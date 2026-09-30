@@ -1,8 +1,11 @@
 import {
+  cleanCombo,
   cleanReference,
   inferSpec,
   markEmptyChart,
   markTruncated,
+  own,
+  promoteRightAxis,
   pruneSpecForType,
   referenceKind,
   renderBigNumber,
@@ -62,6 +65,15 @@ function blankReference(kind) {
   if (kind === "metric") return { metric: "" };
   return { y: "" };
 }
+const COMBO_TYPES = ["line", "bar", "area"];
+const MARK_LABELS = { line: "Line", bar: "Bar", area: "Area" };
+const FORMAT_OPTIONS = [
+  ["", "Default format"],
+  ["number", "Number"],
+  ["currency", "Currency"],
+  ["percent", "Percent"],
+  ["compact", "Compact"],
+];
 
 function isSet(value) {
   return value != null && !(Array.isArray(value) && !value.length);
@@ -137,6 +149,9 @@ export class ChartBuilder {
       if (references.length) spec.references = references;
       else delete spec.references;
     }
+    delete spec.series;
+    delete spec.axes;
+    Object.assign(spec, cleanCombo(this._spec));
     return spec;
   }
 
@@ -160,6 +175,7 @@ export class ChartBuilder {
     const references = this._spec.references;
     this._spec = { ...inferSpec(this.spec, result) };
     if (references) this._spec.references = references;
+    this.promoteAxes();
   }
 
   renderAll() {
@@ -244,6 +260,9 @@ export class ChartBuilder {
       if (type === "bar") {
         fields.push(["Horizontal", checkbox(spec.orientation === "horizontal", "orientation")]);
       }
+      if (COMBO_TYPES.includes(type) && (spec.y?.length ?? 0) >= 2) {
+        fields.push(["Series", this.seriesControl()]);
+      }
       fields.push(["References", this.referencesControl()]);
     } else if (type === "pie") {
       fields.push(["Label", this.columnSelect("label", spec.label)]);
@@ -296,7 +315,12 @@ export class ChartBuilder {
     this.encodingEl.replaceChildren(
       ...fields.map(([text, ...controls]) => {
         const field = document.createElement("div");
-        field.className = text === "References" ? "field field-refs" : "field field-inline";
+        field.className =
+          text === "References"
+            ? "field field-refs"
+            : text === "Series"
+              ? "field field-series"
+              : "field field-inline";
         const label = document.createElement("label");
         label.textContent = text;
         field.append(label, ...controls);
@@ -313,7 +337,9 @@ export class ChartBuilder {
         else if (input.type === "number") this._spec[key] = this.numberSetting(key, input.value);
         else this._spec[key] = input.value || null;
         if (key === "palette" && this._spec.palette !== "diverging") this._spec.midpoint = null;
-        if (key === "palette") this.renderEncodings();
+        if (key === "palette" || key === "group_by" || key === "orientation") {
+          this.renderEncodings();
+        }
         if (this._spec.bin_start != null && this._spec.bin_width == null) this._spec.bin_start = null;
         if (key === "bin_width" && this._spec.bin_width == null) this.renderEncodings();
         this.renderPreview();
@@ -332,6 +358,8 @@ export class ChartBuilder {
         this._spec.y = [...this.encodingEl.querySelectorAll("[data-spec-y]:checked")].map(
           (b) => b.value
         );
+        this.promoteAxes();
+        this.renderEncodings();
         this.renderPreview();
         this.onChange();
       });
@@ -498,6 +526,114 @@ export class ChartBuilder {
       spec.bin_width = null;
       spec.bin_start = null;
     }
+  }
+
+  /* The editable state itself moves to the left axis, not just what the
+     builder saves, so the Series controls show the chart that will be saved
+     and the next edit starts from it. */
+  promoteAxes() {
+    const promoted = promoteRightAxis(this._spec);
+    if (promoted) Object.assign(this._spec, promoted);
+    return Boolean(promoted);
+  }
+
+  seriesChanged({ rerender = false } = {}) {
+    if (this.promoteAxes()) rerender = true;
+    if (rerender) this.renderEncodings();
+    this.renderPreview();
+    this.onChange();
+  }
+
+  columnFormat(column) {
+    const format = this._spec.format;
+    if (typeof format === "string") return format;
+    return own(format, column) ?? "";
+  }
+
+  setColumnFormat(column, value) {
+    let format = this._spec.format;
+    const shared = typeof format === "string" ? format : null;
+    format = Object.assign(Object.create(null), shared ? {} : format);
+    if (shared) for (const name of this._spec.y ?? []) format[name] = shared;
+    if (value) format[column] = value;
+    else delete format[column];
+    this._spec.format = format;
+  }
+
+  seriesControl() {
+    const wrap = document.createElement("div");
+    wrap.className = "series-list";
+    const spec = this._spec;
+    if (spec.group_by || spec.orientation === "horizontal") {
+      const hint = document.createElement("span");
+      hint.className = "hint series-hint";
+      hint.textContent = spec.group_by
+        ? "Group by splits one column into a series per value, so marks and a second axis are off while it is set"
+        : "A horizontal bar has one value axis, so marks and a second axis are off while it is set";
+      wrap.appendChild(hint);
+      return wrap;
+    }
+    const select = (options, value, onPick, label) => {
+      const el = document.createElement("select");
+      el.setAttribute("aria-label", label);
+      for (const [v, text] of options) el.appendChild(new Option(text, v, v === value, v === value));
+      el.addEventListener("change", () => onPick(el.value));
+      return el;
+    };
+    const text = (value, placeholder, label, onInput) => {
+      const el = document.createElement("input");
+      el.type = "text";
+      el.value = value ?? "";
+      el.placeholder = placeholder;
+      el.setAttribute("aria-label", label);
+      el.addEventListener("input", () => onInput(el.value));
+      return el;
+    };
+    const entry = (column) => own(spec.series, column) ?? {};
+    const patch = (column, change, opts) => {
+      spec.series = Object.assign(Object.create(null), spec.series);
+      spec.series[column] = { ...entry(column), ...change };
+      this.seriesChanged(opts);
+    };
+    spec.y.forEach((column, index) => {
+      const row = document.createElement("div");
+      row.className = "series-row";
+      row.dataset.column = column;
+      row.style.setProperty("--series-color", `var(--series-${(index % 8) + 1})`);
+      const name = document.createElement("span");
+      name.className = "series-name";
+      name.textContent = column;
+      name.title = column;
+      const marks = COMBO_TYPES.map((t) => [t, t === spec.type ? `${MARK_LABELS[t]} (chart)` : MARK_LABELS[t]]);
+      row.append(
+        name,
+        select(marks, entry(column).type || spec.type, (v) => patch(column, { type: v }), `Mark for ${column}`),
+        select(
+          [["left", "Left axis"], ["right", "Right axis"]],
+          entry(column).axis || "left",
+          (v) => patch(column, { axis: v }, { rerender: true }),
+          `Axis for ${column}`
+        ),
+        select(FORMAT_OPTIONS, this.columnFormat(column), (v) => {
+          this.setColumnFormat(column, v);
+          this.seriesChanged();
+        }, `Format for ${column}`),
+        text(entry(column).label, "Legend name", `Legend name for ${column}`, (v) => patch(column, { label: v }))
+      );
+      wrap.appendChild(row);
+    });
+    const onRight = spec.y.some((column) => entry(column).axis === "right");
+    const titles = document.createElement("div");
+    titles.className = "series-axes";
+    const axisTitle = (side, label) =>
+      text(spec.axes?.[side]?.title, `${label} axis title`, `${label} axis title`, (v) => {
+        spec.axes = { ...(spec.axes ?? {}), [side]: { ...(spec.axes?.[side] ?? {}), title: v } };
+        this.seriesChanged();
+      });
+    titles.appendChild(axisTitle("left", "Left"));
+    if (onRight) titles.appendChild(axisTitle("right", "Right"));
+    wrap.appendChild(titles);
+    return wrap;
   }
 
   renderPreview() {

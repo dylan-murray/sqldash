@@ -2860,3 +2860,237 @@ def test_editing_a_tile_that_merges_another_leaves_its_references_alone(tmp_path
     text, refs = _save_refs(tmp_path, "b", [{"y": 20, "label": "Goal"}])
     assert refs == {"a": [{"y": 10, "label": "Goal"}], "b": [{"y": 20, "label": "Goal"}]}, text
     assert text.startswith(TILE_MERGE_REFERENCES.split("  - <<: *base")[0]), text
+
+
+COMBO_DOC = (
+    "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+    'queries: {q: "SELECT 1 AS w, 2 AS revenue, 0.5 AS rate"}\n'
+    "tiles:\n"
+    "  - title: A\n"
+    "    query: q\n"
+    "    chart:\n"
+    "      type: bar\n"
+    "      y: [revenue, rate]\n"
+    "      series:\n"
+    "        # the rate reads against its own axis\n"
+    "        rate:\n"
+    "          type: line\n"
+    "          axis: right\n"
+    "      axes:\n"
+    "        right: {title: Rate, min: 0}\n"
+)
+
+
+def _save_combo(tmp_path, chart):
+    store = DashboardStore(tmp_path)
+    _, _, etag = store.load("d")
+    store.upsert_tile(
+        "d", {"id": "a", "title": "A", "query": "q", "chart": chart}, sql=None, if_match=etag
+    )
+    return (tmp_path / "d.yaml").read_text()
+
+
+def test_changing_one_series_mark_rewrites_only_that_value(tmp_path):
+    (tmp_path / "d.yaml").write_text(COMBO_DOC)
+    text = _save_combo(
+        tmp_path,
+        {
+            "type": "bar",
+            "y": ["revenue", "rate"],
+            "series": {"rate": {"type": "area", "axis": "right"}},
+            "axes": {"right": {"title": "Rate", "min": 0}},
+        },
+    )
+    assert text == COMBO_DOC.replace("          type: line\n", "          type: area\n"), text
+
+
+def test_moving_a_series_back_to_the_left_drops_its_axis_key_only(tmp_path):
+    (tmp_path / "d.yaml").write_text(COMBO_DOC)
+    text = _save_combo(
+        tmp_path,
+        {
+            "type": "bar",
+            "y": ["revenue", "rate"],
+            "series": {"rate": {"type": "line"}},
+            "axes": {"left": {"title": "Revenue"}},
+        },
+    )
+    expected = COMBO_DOC.replace("          axis: right\n", "").replace(
+        "        right: {title: Rate, min: 0}\n", "        left: {title: Revenue}\n"
+    )
+    assert text == expected, text
+    dashboard, _, _ = DashboardStore(tmp_path).load("d")
+    assert dashboard.tiles[0].chart.series["rate"].axis is None
+
+
+def test_a_combo_on_a_short_chart_writes_as_flow(tmp_path):
+    (tmp_path / "d.yaml").write_text(
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        'queries: {q: "SELECT 1 AS a, 2 AS b"}\n'
+        "tiles:\n"
+        "  - {title: A, query: q, chart: {type: line, y: [a, b]}}\n"
+    )
+    text = _save_combo(
+        tmp_path,
+        {"type": "line", "y": ["a", "b"], "series": {"b": {"type": "bar", "axis": "right"}}},
+    )
+    assert "chart: {type: line, y: [a, b], series: {b: {type: bar, axis: right}}}" in text, text
+
+
+def _save_tile(tmp_path, tile_id, chart):
+    store = DashboardStore(tmp_path)
+    _, _, etag = store.load("d")
+    store.upsert_tile(
+        "d",
+        {"id": tile_id, "title": tile_id.upper(), "query": "q", "chart": chart},
+        sql=None,
+        if_match=etag,
+    )
+    dashboard, _, _ = store.load("d")
+    return (tmp_path / "d.yaml").read_text(), {t.id: t.chart for t in dashboard.tiles}
+
+
+def _two_tiles(a_chart: str, b_chart: str) -> str:
+    return (
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        'queries: {q: "SELECT 1 AS w, 2 AS revenue, 0.5 AS rate, 3 AS profit"}\n'
+        "tiles:\n"
+        "  - title: A\n    query: q\n    chart:\n"
+        + a_chart
+        + "  - title: B\n    query: q\n    chart:\n"
+        + b_chart
+    )
+
+
+SHARED_SERIES = _two_tiles(
+    "      type: bar\n      y: [revenue, rate]\n"
+    "      series: &shared\n        rate: {type: line, axis: right}\n",
+    "      type: bar\n      y: [revenue, rate]\n      series: *shared\n",
+)
+
+
+@pytest.mark.parametrize("edited", ["a", "b"])
+def test_editing_a_shared_series_mapping_leaves_the_other_tile_alone(tmp_path, edited):
+    (tmp_path / "d.yaml").write_text(SHARED_SERIES)
+    chart = {
+        "type": "bar",
+        "y": ["revenue", "rate"],
+        "series": {"rate": {"type": "area", "axis": "right"}},
+    }
+    text, charts = _save_tile(tmp_path, edited, chart)
+    marks = {tile: c.series["rate"].type for tile, c in charts.items()}
+    assert marks == {"a": "line", "b": "line", edited: "area"}, text
+    assert "&" not in text.split("  - title: " + edited.upper())[1].split("  - title:")[0], text
+
+
+def test_nested_aliases_are_expanded_before_an_edit(tmp_path):
+    (tmp_path / "d.yaml").write_text(
+        _two_tiles(
+            "      type: bar\n      y: [revenue, rate]\n"
+            "      series: &shared {revenue: &line {type: line}, rate: *line}\n",
+            "      type: bar\n      y: [revenue, rate]\n      series: *shared\n",
+        )
+    )
+    chart = {
+        "type": "bar",
+        "y": ["revenue", "rate"],
+        "series": {"revenue": {"type": "line"}, "rate": {"type": "area"}},
+    }
+    text, charts = _save_tile(tmp_path, "b", chart)
+    assert charts["b"].series["revenue"].type == "line", text
+    assert charts["b"].series["rate"].type == "area", text
+    assert charts["a"].series["rate"].type == "line", text
+    assert "*" not in text.split("  - title: B")[1], text
+
+
+MERGED_SERIES = _two_tiles(
+    "      type: bar\n      y: [revenue, rate, profit]\n      series:\n"
+    "        rate: &right {type: line, axis: right}\n"
+    "        profit: {<<: *right, label: Profit}\n",
+    "      type: bar\n      y: [revenue, rate]\n      series: {rate: *right}\n",
+)
+
+
+def test_overriding_a_merged_key_writes_the_override(tmp_path):
+    (tmp_path / "d.yaml").write_text(MERGED_SERIES)
+    chart = {
+        "type": "bar",
+        "y": ["revenue", "rate", "profit"],
+        "series": {
+            "rate": {"type": "line", "axis": "right"},
+            "profit": {"type": "area", "axis": "right", "label": "Profit"},
+        },
+    }
+    text, charts = _save_tile(tmp_path, "a", chart)
+    assert charts["a"].series["profit"].type == "area", text
+    assert charts["a"].series["rate"].type == "line", text
+    assert charts["b"].series["rate"].type == "line", text
+    assert "<<" not in text, text
+
+
+def test_deleting_a_merged_key_takes_it_off_the_series(tmp_path):
+    (tmp_path / "d.yaml").write_text(MERGED_SERIES)
+    chart = {
+        "type": "bar",
+        "y": ["revenue", "rate", "profit"],
+        "series": {"rate": {"type": "line", "axis": "right"}, "profit": {"type": "line"}},
+    }
+    text, charts = _save_tile(tmp_path, "a", chart)
+    assert charts["a"].series["profit"].axis is None, text
+    assert charts["a"].series["rate"].axis == "right", text
+    assert charts["b"].series["rate"].axis == "right", text
+
+
+@pytest.mark.parametrize("doc", [SHARED_SERIES, MERGED_SERIES], ids=["alias", "merge"])
+def test_an_unchanged_save_of_a_shared_chart_is_byte_identical(tmp_path, doc):
+    (tmp_path / "d.yaml").write_text(doc)
+    dashboard, _, _ = DashboardStore(tmp_path).load("d")
+    chart = dashboard.tiles[0].chart.model_dump(exclude_defaults=True)
+    text, _ = _save_tile(tmp_path, "a", chart)
+    assert text == doc, text
+
+
+TILE_MERGE = (
+    "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+    'queries: {q: "SELECT 1 AS w, 2 AS revenue, 0.5 AS rate"}\n'
+    "tiles:\n"
+    "  - &base\n"
+    "    title: A\n"
+    "    query: q\n"
+    "    chart:\n"
+    "      type: bar\n"
+    "      y: [revenue, rate]\n"
+    "      series: {rate: {type: line, axis: right}}\n"
+    "  - <<: *base\n"
+    "    title: B\n"
+)
+
+
+def test_editing_a_tile_that_merges_another_leaves_the_other_alone(tmp_path):
+    (tmp_path / "d.yaml").write_text(TILE_MERGE)
+    chart = {
+        "type": "bar",
+        "y": ["revenue", "rate"],
+        "series": {"rate": {"type": "area", "axis": "right"}},
+    }
+    text, charts = _save_tile(tmp_path, "b", chart)
+    marks = {tile: c.series["rate"].type for tile, c in charts.items()}
+    assert marks == {"a": "line", "b": "area"}, text
+    assert text.startswith(TILE_MERGE.split("  - <<: *base")[0]), text
+
+
+def test_editing_a_series_keeps_the_comment_over_the_next_key(tmp_path):
+    doc = COMBO_DOC.replace("      axes:\n", "      # bounds for the rate\n      axes:\n").replace(
+        "          axis: right\n", "          axis: right\n          label: Rate\n"
+    )
+    (tmp_path / "d.yaml").write_text(doc)
+    text = _save_combo(
+        tmp_path,
+        {
+            "type": "bar",
+            "y": ["revenue", "rate"],
+            "series": {"rate": {"type": "line", "axis": "right"}},
+            "axes": {"right": {"title": "Rate", "min": 0}},
+        },
+    )
+    assert text == doc.replace("          label: Rate\n", ""), text

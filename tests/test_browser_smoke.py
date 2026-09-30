@@ -7431,3 +7431,295 @@ def test_a_reference_to_a_metric_named_proto_uses_the_chart_format(page, tmp_pat
         assert page.evaluate(read).startswith("All  $"), page.evaluate(read)
     finally:
         _stop_server(server, thread, page)
+
+
+def _pick(page, label, value):
+    page.evaluate(
+        """([label, value]) => {
+          const select = document.querySelector(`select[aria-label="${label}"]`);
+          select.value = value;
+          select.dispatchEvent(new Event('change', {bubbles: true}));
+        }""",
+        [label, value],
+    )
+
+
+def test_combo_chart_draws_two_axes_and_the_builder_saves_it(page, tmp_path_factory):
+    root = tmp_path_factory.mktemp("combo")
+    (root / "d.yaml").write_text(
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        "tiles:\n"
+        "  - title: T\n"
+        "    chart:\n"
+        "      type: bar\n"
+        "      x: w\n"
+        "      y: [revenue, rate]\n"
+        "      format: {revenue: currency}\n"
+        "    sql: \"SELECT w, revenue, rate FROM (VALUES ('a', 50000, 0.25), ('b', 60000, NULL))"
+        ' t(w, revenue, rate)"\n'
+    )
+    app = create_app(root, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    try:
+        page.goto(f"http://127.0.0.1:{port}/d/d/query?tile=t", wait_until="load")
+        page.click("#run-btn")
+        page.wait_for_selector("#qb-preview canvas")
+        _pick(page, "Mark for rate", "line")
+        _pick(page, "Axis for rate", "right")
+        _pick(page, "Format for rate", "percent")
+        page.locator('input[aria-label="Legend name for rate"]').fill("Conversion")
+        page.locator('input[aria-label="Right axis title"]').fill("Rate")
+        preview = page.evaluate(
+            """() => {
+              const mount = document.querySelector('#qb-preview .chart-mount');
+              const option = echarts.getInstanceByDom(mount).getOption();
+              return {
+                types: option.series.map((s) => s.type),
+                axes: option.series.map((s) => s.yAxisIndex),
+                names: option.series.map((s) => s.name),
+                yAxes: option.yAxis.map((a) => a.name || null),
+              };
+            }"""
+        )
+        assert preview == {
+            "types": ["bar", "line"],
+            "axes": [0, 1],
+            "names": ["revenue", "Conversion"],
+            "yAxes": [None, "Rate"],
+        }, preview
+        page.click("#qb-add")
+        page.wait_for_url("**/d/d?edit=1")
+        text = (root / "d.yaml").read_text()
+        assert (
+            "      format: {revenue: currency, rate: percent}\n"
+            "      series: {rate: {type: line, axis: right, label: Conversion}}\n"
+            "      axes: {right: {title: Rate}}\n"
+        ) in text, text
+        _wait_tiles(page)
+        page.wait_for_function(
+            """() => {
+              const m = document.querySelector('.tile[data-tile-id="t"] .chart-mount');
+              return m && echarts.getInstanceByDom(m);
+            }"""
+        )
+        tile = page.evaluate(
+            """() => {
+              const m = document.querySelector('.tile[data-tile-id="t"] .chart-mount');
+              const option = echarts.getInstanceByDom(m).getOption();
+              return {
+                yAxes: option.yAxis.length,
+                right: option.yAxis[1].axisLabel.formatter(0.5),
+                left: option.yAxis[0].axisLabel.formatter(50000),
+              };
+            }"""
+        )
+        assert tile == {"yAxes": 2, "right": "50%", "left": "$50K"}, tile
+    finally:
+        _stop_server(server, thread, page)
+
+
+def test_dropping_the_last_left_series_in_the_builder_saves_a_valid_chart(page, tmp_path_factory):
+    root = tmp_path_factory.mktemp("comboleft")
+    (root / "d.yaml").write_text(
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        "tiles:\n"
+        "  - title: T\n"
+        "    chart:\n"
+        "      type: bar\n"
+        "      x: w\n"
+        "      y: [revenue, rate]\n"
+        "      series: {rate: {type: line, axis: right}}\n"
+        "      axes: {right: {title: Rate}}\n"
+        "    sql: \"SELECT w, revenue, rate FROM (VALUES ('a', 50000, 0.25), ('b', 60000, 0.3))"
+        ' t(w, revenue, rate)"\n'
+    )
+    app = create_app(root, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    try:
+        page.goto(f"http://127.0.0.1:{port}/d/d/query?tile=t", wait_until="load")
+        page.click("#run-btn")
+        page.wait_for_selector("#qb-preview canvas")
+        page.locator('[data-spec-y][value="revenue"]').uncheck()
+        page.click("#qb-add")
+        page.wait_for_url("**/d/d?edit=1")
+        store = DashboardStore(root)
+        dashboard, _, _ = store.load("d")
+        chart = dashboard.tiles[0].chart
+        assert chart.y == ["rate"], (root / "d.yaml").read_text()
+        assert all(s.axis != "right" for s in chart.series.values()), (root / "d.yaml").read_text()
+        assert "right" not in chart.axes, (root / "d.yaml").read_text()
+    finally:
+        _stop_server(server, thread, page)
+
+
+def test_the_builder_keeps_a_proto_named_series_through_an_edit(page, tmp_path_factory):
+    root = tmp_path_factory.mktemp("comboproto")
+    (root / "d.yaml").write_text(
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        "tiles:\n"
+        "  - title: T\n"
+        "    chart:\n"
+        "      type: bar\n"
+        "      x: w\n"
+        "      y: [revenue, __proto__]\n"
+        "      format: {revenue: currency, __proto__: percent}\n"
+        "      series: {__proto__: {type: line, axis: right, label: Rate}}\n"
+        "    sql: \"SELECT w, revenue, r AS __proto__ FROM (VALUES ('a', 50000, 0.25),"
+        " ('b', 60000, 0.3)) t(w, revenue, r)\"\n"
+    )
+    app = create_app(root, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    try:
+        page.goto(f"http://127.0.0.1:{port}/d/d/query?tile=t", wait_until="load")
+        page.click("#run-btn")
+        page.wait_for_selector("#qb-preview canvas")
+        assert page.locator('select[aria-label="Format for __proto__"]').input_value() == "percent"
+        page.locator('input[aria-label="Legend name for revenue"]').fill("Revenue")
+        page.click("#qb-add")
+        page.wait_for_url("**/d/d?edit=1")
+        chart = DashboardStore(root).load("d")[0].tiles[0].chart
+        text = (root / "d.yaml").read_text()
+        assert chart.series["__proto__"].axis == "right", text
+        assert chart.series["__proto__"].label == "Rate", text
+        assert chart.series["revenue"].label == "Revenue", text
+        assert chart.format == {"revenue": "currency", "__proto__": "percent"}, text
+    finally:
+        _stop_server(server, thread, page)
+
+
+def test_after_promotion_the_builder_edits_the_promoted_axis(page, tmp_path_factory):
+    root = tmp_path_factory.mktemp("combopromote")
+    (root / "d.yaml").write_text(
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        "tiles:\n"
+        "  - title: T\n"
+        "    chart:\n"
+        "      type: bar\n"
+        "      x: w\n"
+        "      y: [revenue, rate, margin]\n"
+        "      format: {revenue: currency, rate: percent, margin: percent}\n"
+        "      series: {rate: {type: line, axis: right}, margin: {type: line, axis: right}}\n"
+        "      axes:\n"
+        "        left: {title: Revenue, min: 10000, max: 100000}\n"
+        "        right: {title: Rate, min: 0, max: 1}\n"
+        "    sql: \"SELECT w, revenue, rate, margin FROM (VALUES ('a', 50000, 0.25, 0.4),"
+        " ('b', 60000, 0.5, 0.3)) t(w, revenue, rate, margin)\"\n"
+    )
+    app = create_app(root, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    try:
+        page.goto(f"http://127.0.0.1:{port}/d/d/query?tile=t", wait_until="load")
+        page.click("#run-btn")
+        page.wait_for_selector("#qb-preview canvas")
+        page.locator('[data-spec-y][value="revenue"]').uncheck()
+        assert page.locator('select[aria-label="Axis for rate"]').input_value() == "left"
+        assert page.locator('select[aria-label="Axis for margin"]').input_value() == "left"
+        title = page.locator('input[aria-label="Left axis title"]')
+        assert title.input_value() == "Rate"
+        _pick(page, "Axis for rate", "left")
+        page.locator('input[aria-label="Left axis title"]').fill("Share")
+        extent = page.evaluate(
+            """() => {
+              const mount = document.querySelector('#qb-preview .chart-mount');
+              const chart = echarts.getInstanceByDom(mount);
+              return chart.getModel().getComponent('yAxis').axis.scale.getExtent();
+            }"""
+        )
+        assert extent == [0, 1], extent
+        page.click("#qb-add")
+        page.wait_for_url("**/d/d?edit=1")
+        chart = DashboardStore(root).load("d")[0].tiles[0].chart
+        text = (root / "d.yaml").read_text()
+        assert chart.y == ["rate", "margin"], text
+        assert all(s.axis != "right" for s in chart.series.values()), text
+        assert chart.axes["left"].model_dump(exclude_none=True) == {
+            "title": "Share",
+            "min": 0,
+            "max": 1,
+        }, text
+        assert "right" not in chart.axes, text
+    finally:
+        _stop_server(server, thread, page)
+
+
+def test_a_query_that_drops_the_left_column_promotes_the_builder_state(page, tmp_path_factory):
+    root = tmp_path_factory.mktemp("combodrop")
+    (root / "d.yaml").write_text(
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        "tiles:\n"
+        "  - title: T\n"
+        "    chart:\n"
+        "      type: bar\n"
+        "      x: w\n"
+        "      y: [revenue, rate, margin]\n"
+        "      series: {rate: {type: line, axis: right}, margin: {type: line, axis: right}}\n"
+        "      axes:\n"
+        "        left: {title: Revenue, min: 10000, max: 100000}\n"
+        "        right: {title: Rate, min: 0, max: 1}\n"
+        "    sql: \"SELECT w, revenue, rate, margin FROM (VALUES ('a', 50000, 0.25, 0.4),"
+        " ('b', 60000, 0.5, 0.3)) t(w, revenue, rate, margin)\"\n"
+    )
+    app = create_app(root, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    try:
+        page.goto(f"http://127.0.0.1:{port}/d/d/query?tile=t", wait_until="load")
+        page.click("#run-btn")
+        page.wait_for_selector("#qb-preview canvas")
+        page.evaluate(
+            "(sql) => ace.edit('sql-editor').setValue(sql, -1)",
+            "SELECT w, rate, margin FROM (VALUES ('a', 0.25, 0.4), ('b', 0.5, 0.3))"
+            " t(w, rate, margin)",
+        )
+        page.click("#run-btn")
+        page.wait_for_function(
+            """() => !document.querySelector('[data-spec-y][value="revenue"]')"""
+        )
+        assert page.locator('select[aria-label="Axis for rate"]').input_value() == "left"
+        assert page.locator('input[aria-label="Left axis title"]').input_value() == "Rate"
+        _pick(page, "Axis for rate", "left")
+        extent = page.evaluate(
+            """() => {
+              const mount = document.querySelector('#qb-preview .chart-mount');
+              return echarts.getInstanceByDom(mount).getModel().getComponent('yAxis')
+                .axis.scale.getExtent();
+            }"""
+        )
+        assert extent == [0, 1], extent
+    finally:
+        _stop_server(server, thread, page)
+
+
+def test_a_reference_outside_fixed_bounds_is_named_on_the_tile(page, tmp_path_factory):
+    root = tmp_path_factory.mktemp("refbounds")
+    (root / "d.yaml").write_text(
+        "title: D\nsource: {type: duckdb, database: ':memory:'}\n"
+        "tiles:\n"
+        "  - title: T\n"
+        "    chart:\n"
+        "      type: bar\n"
+        "      x: w\n"
+        "      y: [revenue]\n"
+        "      axes: {left: {min: 0, max: 100}}\n"
+        "      references: [{y: 15, label: Inside}, {y: 250, label: Outside}]\n"
+        "    sql: \"SELECT w, revenue FROM (VALUES ('a', 10), ('b', 20)) t(w, revenue)\"\n"
+    )
+    app = create_app(root, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    try:
+        page.goto(f"http://127.0.0.1:{port}/d/d", wait_until="load")
+        _wait_tiles(page)
+        note = page.locator('.tile[data-tile-id="t"] .reference-note')
+        note.wait_for()
+        assert note.inner_text() == (
+            "reference 'Outside' is not drawn: 250 is outside the axis bounds (0 to 100)"
+        )
+        extent = page.evaluate(
+            """() => {
+              const m = document.querySelector('.tile[data-tile-id="t"] .chart-mount');
+              return echarts.getInstanceByDom(m).getModel().getComponent('yAxis')
+                .axis.scale.getExtent();
+            }"""
+        )
+        assert extent == [0, 100], extent
+    finally:
+        _stop_server(server, thread, page)

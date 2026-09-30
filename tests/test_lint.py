@@ -2214,3 +2214,94 @@ def test_a_reference_metric_is_probed_under_the_dashboard_filters(tmp_path):
     unfiltered = "title: D\nsource: {type: duckdb, database: ':memory:'}\n" + _REFERENCE_TILE
     payload = _validate_text(tmp_path, unfiltered, metrics)
     assert not any("missing_region" in e for e in payload["errors"]), payload
+
+
+def test_combo_series_and_axes_validate_their_shape():
+    from pydantic import ValidationError
+
+    from sqldash.models.chart import ChartSpec
+
+    spec = ChartSpec.model_validate(
+        {
+            "type": "bar",
+            "y": ["revenue", "rate"],
+            "series": {"rate": {"type": "line", "axis": "right", "label": "Rate"}},
+            "axes": {"right": {"title": "Rate", "min": 0, "max": 1, "format": "percent"}},
+        }
+    )
+    assert spec.series["rate"].axis == "right"
+    assert spec.axes["right"].max == 1
+    for bad, needle in [
+        ({"series": {"rate": {"axis": "top"}}}, "'left' or 'right'"),
+        ({"series": {"rate": {"type": "pie"}}}, "'line', 'bar' or 'area'"),
+        ({"series": {"rate": {"color": "red"}}}, "Extra inputs"),
+        ({"axes": {"top": {}}}, "'left' or 'right'"),
+        ({"axes": {"left": {"min": 5, "max": 1}}}, "must be below max"),
+        ({"axes": {"left": {"min": float("nan")}}}, "axis min must be a finite number"),
+        ({"axes": {"right": {"max": float("inf")}}}, "axis max must be a finite number"),
+        ({"axes": {"left": {"format": "furlongs"}}}, "is not valid"),
+    ]:
+        with pytest.raises(ValidationError, match=needle):
+            ChartSpec.model_validate({"type": "bar", **bad})
+
+
+def _combo_errors_for(tmp_path, chart, extra=""):
+    (tmp_path / "d.yaml").write_text(
+        "title: D\n"
+        "source: {type: duckdb, database: ':memory:'}\n"
+        "tiles:\n"
+        f"  - {{title: T, chart: {chart}, sql: 'SELECT 1 AS a, 2 AS b, 3 AS c'}}\n" + extra
+    )
+    return [f.message for f in lint(tmp_path) if f.level == "error"]
+
+
+def test_lint_accepts_a_bar_and_line_combo(tmp_path):
+    errors = _combo_errors_for(
+        tmp_path,
+        "{type: bar, x: a, y: [b, c], series: {c: {type: line, axis: right}}, "
+        "axes: {right: {title: Rate}}}",
+    )
+    assert errors == [], errors
+
+
+@pytest.mark.parametrize(
+    ("chart", "needle"),
+    [
+        ("{type: pie, series: {b: {type: line}}}", "apply to line, bar and area charts, not pie"),
+        ("{type: scatter, axes: {left: {title: T}}}", "not scatter"),
+        (
+            "{type: bar, y: [b], group_by: a, series: {b: {axis: right}}}",
+            "cannot combine with group_by",
+        ),
+        (
+            "{type: bar, orientation: horizontal, y: [b, c], series: {c: {type: line}}}",
+            "need a vertical chart",
+        ),
+        ("{type: bar, y: [b, c], series: {d: {type: line}}}", "series 'd' is not in the chart's y"),
+        (
+            "{type: bar, y: [b, c], series: {b: {axis: right}, c: {axis: right}}}",
+            "every y column is on the right axis",
+        ),
+        ("{type: bar, y: [b, c], axes: {right: {title: R}}}", "no series reads against it"),
+    ],
+)
+def test_lint_explains_combos_it_cannot_draw(tmp_path, chart, needle):
+    errors = _combo_errors_for(tmp_path, chart)
+    assert any(needle in m for m in errors), errors
+
+
+def test_lint_rejects_a_combo_on_a_compared_metric_tile(tmp_path):
+    create_demo(tmp_path)
+    (tmp_path / ".sqldash" / "c.yaml").write_text(
+        "title: C\n"
+        "source: {type: duckdb, attach_files: true}\n"
+        "filters:\n"
+        "  - {name: dates, type: daterange, default: last_30_days}\n"
+        "tiles:\n"
+        "  - title: T\n"
+        "    metric: {name: revenue, grain: day}\n"
+        "    compare: previous_period\n"
+        "    chart: {type: line, axes: {left: {title: Revenue}}}\n"
+    )
+    errors = [f.message for f in lint(tmp_path) if f.level == "error"]
+    assert any("cannot combine with compare" in m for m in errors), errors

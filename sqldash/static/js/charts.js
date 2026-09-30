@@ -278,11 +278,13 @@ export function formatValue(value, format, compact = false) {
   const { locale } = formatConfig;
   if (format === "currency" || CURRENCY_CODE.test(format)) {
     const currency = CURRENCY_CODE.test(format) ? format : formatConfig.currency;
+    const notation = compact || Math.abs(num) >= 1_000_000 ? "compact" : "standard";
     try {
       return new Intl.NumberFormat(locale, {
         style: "currency",
         currency,
-        notation: compact || Math.abs(num) >= 1_000_000 ? "compact" : "standard",
+        notation,
+        minimumFractionDigits: notation === "compact" ? 0 : undefined,
         maximumFractionDigits: Math.abs(num) >= 1000 ? (compact ? 1 : 0) : 2,
       }).format(amount);
     } catch {
@@ -345,9 +347,21 @@ function firstColOfTypes(result, typeSet, exclude = []) {
 }
 
 const TYPE_FIELDS = {
-  line: ["x", "y", "group_by", "legend", "format", "references"],
-  bar: ["x", "y", "group_by", "stacked", "orientation", "color_by", "legend", "format", "references"],
-  area: ["x", "y", "group_by", "stacked", "legend", "format", "references"],
+  line: ["x", "y", "group_by", "legend", "format", "references", "series", "axes"],
+  bar: [
+    "x",
+    "y",
+    "group_by",
+    "stacked",
+    "orientation",
+    "color_by",
+    "legend",
+    "format",
+    "references",
+    "series",
+    "axes",
+  ],
+  area: ["x", "y", "group_by", "stacked", "legend", "format", "references", "series", "axes"],
   scatter: ["x", "y", "group_by", "legend", "format", "references"],
   pie: ["label", "value", "legend", "format"],
   heatmap: [
@@ -464,9 +478,16 @@ function pivot(result, xName, yName, groupName) {
   return groups;
 }
 
+/* Column names key these maps and a column can be called `__proto__`, so a
+   read takes only the map's own entry and a write goes into a map with no
+   prototype, where that name is an ordinary key. */
+export function own(map, key) {
+  return map != null && Object.hasOwn(map, key) ? map[key] : undefined;
+}
+
 export function seriesFormat(spec, name) {
   if (typeof spec.format === "string") return spec.format;
-  return (spec.format || {})[name] || "number";
+  return own(spec.format, name) || "number";
 }
 
 export function baseOption(spec, isTemporal, yFormat, compact) {
@@ -543,6 +564,7 @@ function xyOption(spec, result, forcedColor, height = 0, width = 0) {
     const xi = colIndex(result, spec.x);
     series = spec.y.map((yName) => ({
       name: humanize(yName),
+      column: yName,
       data: result.rows.map((row) => [row[xi], chartNumber(row[colIndex(result, yName)])]),
     }));
   }
@@ -567,16 +589,28 @@ function xyOption(spec, result, forcedColor, height = 0, width = 0) {
     };
   }
 
+  const combo = comboLayout(spec, series, horizontal);
+  const perSeriesFormats =
+    typeof spec.format === "object" && Object.keys(spec.format ?? {}).length > 0;
   const colors = forcedColor && series.length === 1 ? [forcedColor] : palette();
   option.color = colors;
   option.series = series.map((s, i) => {
     const seriesColor = colors[i % colors.length];
+    const markType = combo ? combo.types[i] : spec.type;
     const common = { name: s.name, data: s.data, emphasis: { focus: series.length > 1 ? "series" : "none" } };
-    if (spec.type === "bar") {
+    if (combo) {
+      common.name = combo.names[i];
+      common.yAxisIndex = combo.axes[i];
+    }
+    if (combo || (s.column && perSeriesFormats)) {
+      const format = seriesFormat(spec, s.column);
+      common.tooltip = { valueFormatter: (v) => formatValue(v, format) };
+    }
+    if (markType === "bar") {
       return {
         ...common,
         type: "bar",
-        stack: spec.stacked ? "total" : undefined,
+        stack: spec.stacked ? (combo ? `bar-${combo.axes[i]}` : "total") : undefined,
         barMaxWidth: 24,
         encode: horizontal ? { x: 1, y: 0 } : undefined,
         itemStyle: {
@@ -586,7 +620,7 @@ function xyOption(spec, result, forcedColor, height = 0, width = 0) {
         },
       };
     }
-    if (spec.type === "scatter") {
+    if (markType === "scatter") {
       return {
         ...common,
         type: "scatter",
@@ -597,14 +631,18 @@ function xyOption(spec, result, forcedColor, height = 0, width = 0) {
     return {
       ...common,
       type: "line",
-      stack: spec.type === "area" && stacked && series.length > 1 ? "total" : undefined,
+      stack: combo
+        ? combo.areaStack[i]
+        : spec.type === "area" && stacked && series.length > 1
+          ? "total"
+          : undefined,
       lineStyle: { width: 2, cap: "round", join: "round" },
       symbol: "circle",
       symbolSize: 8,
       showSymbol: showSymbols,
       itemStyle: { borderColor: surface, borderWidth: 2 },
       areaStyle:
-        spec.type === "area" ? { opacity: 1, color: areaGradient(seriesColor) } : undefined,
+        markType === "area" ? { opacity: 1, color: areaGradient(seriesColor) } : undefined,
     };
   });
 
@@ -638,10 +676,18 @@ function xyOption(spec, result, forcedColor, height = 0, width = 0) {
 
   option.legend.show = spec.legend !== false && option.series.length >= 2;
   if (option.legend.show) option.grid.top = 32;
+  if (combo) applyComboAxes(option, spec, combo, compact, width);
   if (spec.type === "bar" && !isTemporal && !horizontal) {
     option.xAxis.axisLabel.interval = "auto";
   }
-  addReferences(option, spec, result, { horizontal, isTemporal, yFormat, width, height });
+  const referenceFormat = combo ? axisFormat(spec, combo, 0) : yFormat;
+  addReferences(option, spec, result, {
+    horizontal,
+    isTemporal,
+    yFormat: referenceFormat,
+    width,
+    height,
+  });
   return option;
 }
 
@@ -750,10 +796,19 @@ export function referenceExtent(extent, values, splitNumber = 5) {
   return { min: tidy(Math.floor(lo / step) * step), max: tidy(Math.ceil(hi / step) * step) };
 }
 
+/* Only a bound ECharts fits to the data stretches for a reference: one the
+   author fixed (`axes.left.min`) stays where it was put. */
 function reachValueAxis(axis, values) {
   const split = axis.splitNumber ?? 5;
-  axis.min = (e) => referenceExtent(e, values, split)?.min ?? null;
-  axis.max = (e) => referenceExtent(e, values, split)?.max ?? null;
+  if (typeof axis.min !== "number") axis.min = (e) => referenceExtent(e, values, split)?.min ?? null;
+  if (typeof axis.max !== "number") axis.max = (e) => referenceExtent(e, values, split)?.max ?? null;
+}
+
+/* References a chart cannot draw, one line each, for the tile to name. */
+const undrawn = new WeakMap();
+
+export function undrawnReferences(option) {
+  return undrawn.get(option) ?? [];
 }
 
 function reachTimeAxis(axis, times) {
@@ -870,6 +925,19 @@ function addReferences(option, spec, result, { horizontal, isTemporal, yFormat, 
   const surface = cssVar("--surface");
   const valueKey = horizontal ? "xAxis" : "yAxis";
   const categoryKey = horizontal ? "yAxis" : "xAxis";
+  const valueAxis = Array.isArray(option[valueKey]) ? option[valueKey][0] : option[valueKey];
+  const fixedMin = typeof valueAxis.min === "number" ? valueAxis.min : -Infinity;
+  const fixedMax = typeof valueAxis.max === "number" ? valueAxis.max : Infinity;
+  const skipped = [];
+  const outside = (label, ...ys) => {
+    const off = ys.find((v) => v < fixedMin || v > fixedMax);
+    if (off === undefined) return false;
+    const range = `${Number.isFinite(fixedMin) ? fixedMin : "no minimum"} to ${
+      Number.isFinite(fixedMax) ? fixedMax : "no maximum"
+    }`;
+    skipped.push(`reference '${label ?? off}' is not drawn: ${off} is outside the axis bounds (${range})`);
+    return true;
+  };
   const categories = categoryPositions(option.series);
   const temporalCategories = TEMPORAL_TYPES.has(result.columns[colIndex(result, spec.x)]?.type);
   const lines = [];
@@ -895,6 +963,7 @@ function addReferences(option, spec, result, { horizontal, isTemporal, yFormat, 
     if (Array.isArray(ref.y)) {
       const [a, b] = ref.y.map(finiteNumber);
       if (a === null || b === null) continue;
+      if (outside(label, a, b)) continue;
       values.push(a, b);
       const text = label ?? `${referenceValue(Math.min(a, b), fmt)} – ${referenceValue(Math.max(a, b), fmt)}`;
       bands.push({
@@ -937,6 +1006,7 @@ function addReferences(option, spec, result, { horizontal, isTemporal, yFormat, 
     } else {
       const y = finiteNumber(ref.y);
       if (y === null) continue;
+      if (outside(label, y)) continue;
       values.push(y);
       const shown = referenceValue(y, fmt);
       valueLines.push(y);
@@ -953,7 +1023,8 @@ function addReferences(option, spec, result, { horizontal, isTemporal, yFormat, 
       });
     }
   }
-  if (values.length) reachValueAxis(option[valueKey], values);
+  if (skipped.length) undrawn.set(option, skipped);
+  if (values.length) reachValueAxis(valueAxis, values);
   liftCrowdedBandLabels(bandLabels, valueLines, option.series, values, height);
   const labelsAbove = lines.some((line) => line.label.position === "end");
   if (labelsAbove && option.legend.show) option.grid.top += 18;
@@ -999,6 +1070,144 @@ function addReferences(option, spec, result, { horizontal, isTemporal, yFormat, 
         : undefined,
     });
   }
+}
+
+/* A chart whose every y column is on the right has no left axis, so it is a
+   one-axis chart: the columns move to the left and take the right axis's
+   title, bounds and format with them. Returns the series and axes to use,
+   or null when there is nothing to move. */
+export function promoteRightAxis(spec) {
+  const ys = spec.y ?? [];
+  if (!ys.length || !ys.every((column) => own(spec.series, column)?.axis === "right")) return null;
+  const series = Object.create(null);
+  for (const [column, entry] of Object.entries(spec.series ?? {})) {
+    if (entry && ys.includes(column)) {
+      series[column] = { ...entry };
+      delete series[column].axis;
+    } else {
+      series[column] = entry;
+    }
+  }
+  return { series, axes: spec.axes?.right ? { left: spec.axes.right } : {} };
+}
+
+export function cleanCombo(spec) {
+  const out = {};
+  const ys = new Set(spec.y ?? []);
+  const blocked = Boolean(spec.group_by) || spec.orientation === "horizontal";
+  if (!["line", "bar", "area"].includes(spec.type) || blocked) return out;
+  spec = { ...spec, ...promoteRightAxis(spec) };
+  const series = Object.create(null);
+  for (const [column, entry] of Object.entries(spec.series ?? {})) {
+    if (!entry || (ys.size && !ys.has(column))) continue;
+    const next = {};
+    if (entry.type && entry.type !== spec.type) next.type = entry.type;
+    if (entry.axis === "right") next.axis = "right";
+    if (entry.label) next.label = entry.label;
+    if (Object.keys(next).length) series[column] = next;
+  }
+  if (Object.keys(series).length) out.series = Object.fromEntries(Object.entries(series));
+  const onRight = Object.values(series).some((entry) => entry.axis === "right");
+  const axes = {};
+  for (const side of ["left", "right"]) {
+    if (side === "right" && !onRight) continue;
+    const entry = spec.axes?.[side];
+    if (!entry) continue;
+    const next = {};
+    if (entry.title) next.title = entry.title;
+    for (const key of ["min", "max"]) {
+      if (entry[key] !== null && entry[key] !== undefined && entry[key] !== "") {
+        const n = Number(entry[key]);
+        if (Number.isFinite(n)) next[key] = n;
+      }
+    }
+    if (entry.format) next.format = entry.format;
+    if (Object.keys(next).length) axes[side] = next;
+  }
+  if (Object.keys(axes).length) out.axes = axes;
+  return out;
+}
+
+/* Per-series marks and a right axis only apply where each series is one y
+   column: group_by (and compare, which rides on it) names series by value,
+   and a horizontal bar has no second value axis to put them on. */
+function comboLayout(spec, series, horizontal) {
+  const overrides = spec.series ?? {};
+  const axesSet = Object.keys(spec.axes ?? {}).length > 0;
+  if ((!Object.keys(overrides).length && !axesSet) || spec.group_by || horizontal) return null;
+  if (!["line", "bar", "area"].includes(spec.type)) return null;
+  const types = series.map((s) => own(overrides, s.column)?.type || spec.type);
+  const axes = series.map((s) => (own(overrides, s.column)?.axis === "right" ? 1 : 0));
+  const names = series.map((s) => own(overrides, s.column)?.label || s.name);
+  const stackArea = spec.stacked || spec.type === "area";
+  const areaStack = types.map((type, i) => {
+    if (type !== "area" || !stackArea) return undefined;
+    const peers = types.filter((t, j) => t === "area" && axes[j] === axes[i]).length;
+    return peers > 1 ? `area-${axes[i]}` : undefined;
+  });
+  const columns = series.map((s) => s.column);
+  return { types, axes, names, areaStack, columns, hasRight: axes.includes(1) };
+}
+
+function axisFormat(spec, combo, index) {
+  const side = index === 1 ? "right" : "left";
+  const authored = spec.axes?.[side]?.format;
+  if (authored) return authored;
+  const first = combo.columns.find((_, i) => combo.axes[i] === index);
+  return seriesFormat(spec, first ?? spec.y[0]);
+}
+
+function axisTitle(text, width, shared) {
+  if (!(width > 0)) return text;
+  const plot = shared ? (width - 110) / 2 - 10 : width - 60;
+  const room = Math.max(4, Math.floor(plot / 6.5));
+  return text.length > room ? `${text.slice(0, room - 1).trimEnd()}…` : text;
+}
+
+function applyComboAxes(option, spec, combo, compact, width = 0) {
+  const muted = cssVar("--ink-muted");
+  const base = option.yAxis;
+  const axis = (index) => {
+    const side = index === 1 ? "right" : "left";
+    const authored = spec.axes?.[side] ?? {};
+    const format = axisFormat(spec, combo, index);
+    const next = {
+      ...base,
+      position: side,
+      axisLabel: {
+        ...base.axisLabel,
+        formatter: (v) => formatValue(v, format === "number" ? "compact" : format, true),
+      },
+    };
+    if (index === 1) {
+      next.splitLine = { show: false };
+    }
+    if (authored.min != null) next.min = authored.min;
+    if (authored.max != null) next.max = authored.max;
+    if (authored.title && !compact) {
+      next.name = axisTitle(authored.title, width, combo.hasRight);
+      next.nameLocation = "end";
+      next.nameGap = 12;
+      next.nameTextStyle = {
+        color: muted,
+        fontSize: 11,
+        fontWeight: 500,
+        align: side,
+        padding: 0,
+      };
+    }
+    return next;
+  };
+  option.yAxis = combo.hasRight ? [axis(0), axis(1)] : axis(0);
+  if (option.legend.show) {
+    option.legend.type = "scroll";
+    option.legend.pageIconColor = cssVar("--ink-2");
+    option.legend.pageIconInactiveColor = cssVar("--grid-line");
+    option.legend.pageIconSize = 9;
+    option.legend.pageTextStyle = { color: muted, fontSize: 11 };
+  }
+  const titled = ["left", "right"].some((side) => spec.axes?.[side]?.title);
+  if (titled && !compact) option.grid.top += 18;
 }
 
 export function pieTooltip(fmt) {

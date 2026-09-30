@@ -17,6 +17,8 @@ from pydantic import (
 ChartType = Literal[
     "line", "bar", "area", "scatter", "pie", "histogram", "heatmap", "big_number", "table"
 ]
+COMBO_CHART_TYPES = ("line", "bar", "area")
+AxisSide = Literal["left", "right"]
 REFERENCE_CHART_TYPES = ("line", "bar", "area", "scatter")
 ReferenceColor = Literal[
     "ink",
@@ -121,6 +123,46 @@ class ReferenceLine(BaseModel):
         return self
 
 
+class SeriesSpec(BaseModel):
+    """How one y column draws on an x/y chart: its mark, which value axis it
+    reads against, and its legend name. Unset keys follow the chart."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["line", "bar", "area"] | None = None
+    axis: AxisSide | None = None
+    label: str | None = None
+
+
+class AxisSpec(BaseModel):
+    """One value axis: its title, its fixed bounds, and its tick format (which
+    otherwise comes from the first series on that axis)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = None
+    min: float | None = None
+    max: float | None = None
+    format: str | None = None
+
+    @field_validator("format")
+    @classmethod
+    def check_format(cls, v):
+        if v is not None:
+            validate_format(v)
+        return v
+
+    @model_validator(mode="after")
+    def check_bounds(self) -> "AxisSpec":
+        for key in ("min", "max"):
+            value = getattr(self, key)
+            if value is not None and not math.isfinite(value):
+                raise ValueError(f"axis {key} must be a finite number")
+        if self.min is not None and self.max is not None and self.min >= self.max:
+            raise ValueError(f"axis min ({self.min:g}) must be below max ({self.max:g})")
+        return self
+
+
 class ChartSpec(BaseModel):
     """How a tile renders its result. A bare string (`chart: bar`) coerces to a spec
     with only `type`; unset encodings are inferred from the result columns client-side.
@@ -149,6 +191,8 @@ class ChartSpec(BaseModel):
     x_order: list[str | int | FiniteFloat | bool] | None = None
     y_order: list[str | int | FiniteFloat | bool] | None = None
     references: list[ReferenceLine] = []
+    series: dict[str, SeriesSpec] = {}
+    axes: dict[AxisSide, AxisSpec] = {}
 
     @field_validator("y", mode="before")
     @classmethod

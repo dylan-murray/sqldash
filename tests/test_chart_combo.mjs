@@ -1,0 +1,362 @@
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import { test } from "node:test";
+
+import {
+  cleanCombo,
+  formatValue,
+  promoteRightAxis,
+  pruneSpecForType,
+  setFormatConfig,
+  translate,
+  undrawnReferences,
+} from "../sqldash/static/js/charts.js";
+
+setFormatConfig({ locale: "en-US" });
+globalThis.document = { documentElement: {} };
+globalThis.getComputedStyle = () => ({ getPropertyValue: () => "#123456" });
+
+const weekly = {
+  columns: [
+    { name: "week", type: "string" },
+    { name: "revenue", type: "float" },
+    { name: "rate", type: "float" },
+    { name: "orders", type: "integer" },
+  ],
+  rows: [
+    ["w1", 50000, 0.12, 400],
+    ["w2", 51000, null, 410],
+    ["w3", -3000, -0.05, 390],
+  ],
+};
+
+const combo = {
+  type: "bar",
+  x: "week",
+  y: ["revenue", "rate"],
+  format: { revenue: "currency", rate: "percent" },
+  series: { rate: { type: "line", axis: "right", label: "Conversion" } },
+  axes: { left: { title: "Revenue" }, right: { title: "Rate", min: 0, max: 1 } },
+};
+
+test("a legacy multi-series chart keeps one axis and one mark", () => {
+  const option = translate({ type: "bar", x: "week", y: ["revenue", "orders"] }, weekly);
+  assert.ok(!Array.isArray(option.yAxis));
+  assert.deepEqual(option.series.map((s) => s.type), ["bar", "bar"]);
+  assert.ok(option.series.every((s) => s.yAxisIndex === undefined && s.tooltip === undefined));
+  assert.equal(option.legend.type, undefined);
+});
+
+test("series overrides pick the mark, axis and legend name per column", () => {
+  const option = translate(combo, weekly);
+  assert.deepEqual(option.series.map((s) => s.type), ["bar", "line"]);
+  assert.deepEqual(option.series.map((s) => s.yAxisIndex), [0, 1]);
+  assert.deepEqual(option.series.map((s) => s.name), ["revenue", "Conversion"]);
+  assert.equal(option.series[1].data[1][1], null);
+});
+
+test("each axis formats in its own units and takes its title and bounds", () => {
+  const option = translate(combo, weekly);
+  const [left, right] = option.yAxis;
+  assert.equal(left.position, "left");
+  assert.equal(right.position, "right");
+  assert.equal(left.axisLabel.formatter(20000), "$20K");
+  assert.equal(right.axisLabel.formatter(0.25), "25%");
+  assert.equal(left.name, "Revenue");
+  assert.equal(right.name, "Rate");
+  assert.equal(right.min, 0);
+  assert.equal(right.max, 1);
+  assert.equal(right.splitLine.show, false);
+});
+
+test("the tooltip formats each series in its own unit", () => {
+  const option = translate(combo, weekly);
+  assert.equal(option.series[0].tooltip.valueFormatter(51000), "$51,000");
+  assert.equal(option.series[1].tooltip.valueFormatter(0.125), "12.5%");
+});
+
+test("stacked bars stack per axis and leave the line alone", () => {
+  const option = translate(
+    {
+      type: "bar",
+      stacked: true,
+      x: "week",
+      y: ["revenue", "orders", "rate"],
+      series: { rate: { type: "line", axis: "right" } },
+    },
+    weekly
+  );
+  assert.deepEqual(option.series.map((s) => s.stack), ["bar-0", "bar-0", undefined]);
+});
+
+test("group_by and horizontal bars ignore series overrides", () => {
+  const grouped = translate({ ...combo, y: ["revenue"], group_by: "week" }, weekly);
+  assert.ok(!Array.isArray(grouped.yAxis));
+  const horizontal = translate({ ...combo, orientation: "horizontal" }, weekly);
+  assert.ok(horizontal.series.every((s) => s.type === "bar" && s.yAxisIndex === undefined));
+});
+
+test("a narrow chart shortens axis titles instead of letting them collide", () => {
+  const option = translate(
+    { ...combo, axes: { left: { title: "Revenue in dollars" }, right: { title: "Share of all orders" } } },
+    weekly,
+    undefined,
+    240,
+    260
+  );
+  assert.ok(option.yAxis[0].name.endsWith("…"));
+  assert.ok(option.yAxis[1].name.length <= 10, option.yAxis[1].name);
+});
+
+test("combo keys survive line, bar and area and drop elsewhere", () => {
+  assert.deepEqual(pruneSpecForType(combo, "area").series, combo.series);
+  assert.equal(pruneSpecForType(combo, "scatter").series, undefined);
+  assert.equal(pruneSpecForType(combo, "pie").axes, undefined);
+});
+
+test("cleanCombo writes only the settings that change something", () => {
+  assert.deepEqual(
+    cleanCombo({
+      type: "bar",
+      y: ["revenue", "rate"],
+      series: {
+        revenue: { type: "bar", axis: "left", label: null },
+        rate: { type: "line", axis: "right", label: "" },
+        gone: { type: "line" },
+      },
+      axes: { left: { title: "", min: null, max: null, format: null }, right: { title: "Rate", min: "0" } },
+    }),
+    { series: { rate: { type: "line", axis: "right" } }, axes: { right: { title: "Rate", min: 0 } } }
+  );
+  assert.deepEqual(
+    cleanCombo({ type: "bar", y: ["a", "b"], series: { b: { axis: "left" } }, axes: { right: { title: "R" } } }),
+    {}
+  );
+  assert.deepEqual(cleanCombo({ ...combo, group_by: "week" }), {});
+});
+
+test("compact currency drops trailing zeros on every Node, not only on newer engines", () => {
+  assert.equal(formatValue(20000, "currency", true), "$20K");
+  assert.equal(formatValue(21500, "currency", true), "$21.5K");
+  assert.equal(formatValue(0, "currency", true), "$0");
+  assert.equal(formatValue(12.5, "currency"), "$12.50");
+});
+
+test("per-series formats reach the tooltip without marks or a second axis", () => {
+  const option = translate(
+    { type: "bar", x: "week", y: ["revenue", "rate"], format: { revenue: "currency", rate: "percent" } },
+    weekly
+  );
+  assert.ok(!Array.isArray(option.yAxis));
+  assert.equal(option.series[0].tooltip.valueFormatter(51000), "$51,000");
+  assert.equal(option.series[1].tooltip.valueFormatter(0.125), "12.5%");
+});
+
+test("a chart whose only series are on the right comes back to the left axis", () => {
+  assert.deepEqual(
+    cleanCombo({
+      type: "bar",
+      y: ["rate"],
+      series: { rate: { type: "line", axis: "right" } },
+      axes: { right: { title: "Rate" } },
+    }),
+    { series: { rate: { type: "line" } }, axes: { left: { title: "Rate" } } }
+  );
+  assert.deepEqual(
+    cleanCombo({ type: "line", y: ["rate"], series: { rate: { axis: "right" } } }),
+    {}
+  );
+});
+
+test("a series left on the default format reads as a plain number beside a currency one", () => {
+  const option = translate(
+    { type: "bar", x: "week", y: ["revenue", "orders"], format: { revenue: "currency" } },
+    weekly
+  );
+  assert.equal(option.series[0].tooltip.valueFormatter(51000), "$51,000");
+  assert.equal(option.series[1].tooltip.valueFormatter(12), "12");
+});
+
+test("series moved back to the left take their right axis's title, bounds and format", () => {
+  assert.deepEqual(
+    cleanCombo({
+      type: "bar",
+      y: ["rate"],
+      series: { rate: { type: "line", axis: "right" } },
+      axes: {
+        left: { title: "Revenue", min: 10000, max: 100000 },
+        right: { title: "Rate", min: 0, max: 1, format: "percent" },
+      },
+    }),
+    {
+      series: { rate: { type: "line" } },
+      axes: { left: { title: "Rate", min: 0, max: 1, format: "percent" } },
+    }
+  );
+});
+
+test("a column called __proto__ keeps its series settings and format", () => {
+  const rows = {
+    columns: [
+      { name: "week", type: "string" },
+      { name: "revenue", type: "float" },
+      { name: "__proto__", type: "float" },
+    ],
+    rows: [["w1", 50000, 0.25]],
+  };
+  const series = JSON.parse('{"__proto__": {"type": "line", "axis": "right", "label": "Rate"}}');
+  const format = JSON.parse('{"revenue": "currency", "__proto__": "percent"}');
+  const spec = { type: "bar", x: "week", y: ["revenue", "__proto__"], format, series };
+  const cleaned = cleanCombo(spec);
+  assert.deepEqual(JSON.parse(JSON.stringify(cleaned.series)), JSON.parse('{"__proto__": {"type": "line", "axis": "right", "label": "Rate"}}'));
+  const option = translate(spec, rows);
+  assert.deepEqual(option.series.map((s) => [s.type, s.yAxisIndex, s.name]), [
+    ["bar", 0, "revenue"],
+    ["line", 1, "Rate"],
+  ]);
+  assert.equal(option.series[1].tooltip.valueFormatter(0.25), "25%");
+});
+
+test("promoting leaves nothing on the right and hands the left axis the right one's settings", () => {
+  const spec = {
+    y: ["rate", "margin"],
+    series: { rate: { type: "line", axis: "right" }, margin: { axis: "right" }, revenue: { label: "R" } },
+    axes: { left: { title: "Revenue", min: 10000 }, right: { title: "Rate", min: 0, max: 1 } },
+  };
+  const promoted = promoteRightAxis(spec);
+  assert.deepEqual(JSON.parse(JSON.stringify(promoted)), {
+    series: { rate: { type: "line" }, margin: {}, revenue: { label: "R" } },
+    axes: { left: { title: "Rate", min: 0, max: 1 } },
+  });
+  assert.equal(promoteRightAxis({ ...spec, y: ["revenue", "rate"] }), null);
+});
+
+test("a combo chart with a right axis also draws its references on the left axis", () => {
+  const option = translate(
+    { ...combo, references: [{ y: 45000, label: "Goal" }, { x: "w2", label: "Launch" }] },
+    weekly
+  );
+  assert.equal(option.yAxis.length, 2);
+  assert.deepEqual(option.series.slice(0, 2).map((s) => [s.type, s.yAxisIndex]), [
+    ["bar", 0],
+    ["line", 1],
+  ]);
+  const refs = option.series.find((s) => s.name === "__reference_lines");
+  assert.deepEqual(refs.markLine.data.map((d) => [d.yAxis, d.xAxis, d.label.formatter]), [
+    [45000, undefined, "Goal  $45,000"],
+    [undefined, "w2", "Launch"],
+  ]);
+  assert.equal(refs.yAxisIndex, undefined);
+  const echarts = createRequire(import.meta.url)("../sqldash/static/vendor/echarts.min.js");
+  const fake = globalThis.document;
+  delete globalThis.document;
+  try {
+    const chart = echarts.init(null, null, { renderer: "svg", ssr: true, width: 600, height: 300 });
+    chart.setOption(option);
+    const svg = chart.renderToSVGString();
+    chart.dispose();
+    for (const text of [">Goal  $45,000<", ">Launch<", ">Conversion<", ">Rate<"]) {
+      assert.ok(svg.includes(text), text);
+    }
+  } finally {
+    globalThis.document = fake;
+  }
+});
+
+const vendored = createRequire(import.meta.url)("../sqldash/static/vendor/echarts.min.js");
+
+function rendered(option) {
+  const fake = globalThis.document;
+  delete globalThis.document;
+  try {
+    const chart = vendored.init(null, null, { renderer: "svg", ssr: true, width: 600, height: 300 });
+    chart.setOption(option);
+    const left = chart.getModel().getComponent("yAxis", 0).axis.scale.getExtent();
+    const svg = chart.renderToSVGString();
+    chart.dispose();
+    return { left, svg };
+  } finally {
+    globalThis.document = fake;
+  }
+}
+
+const small = {
+  columns: [
+    { name: "week", type: "string" },
+    { name: "revenue", type: "float" },
+    { name: "rate", type: "float" },
+  ],
+  rows: [
+    ["w1", 10, 0.2],
+    ["w2", 20, 0.4],
+  ],
+};
+
+test("a reference past the data stretches the left axis of a two-axis chart", () => {
+  const option = translate(
+    {
+      type: "bar",
+      x: "week",
+      y: ["revenue", "rate"],
+      series: { rate: { type: "line", axis: "right" } },
+      references: [{ y: 100, label: "TARGET" }],
+    },
+    small
+  );
+  const { left, svg } = rendered(option);
+  assert.deepEqual(left, [0, 100]);
+  assert.ok(svg.includes(">TARGET  100<"), "TARGET drawn");
+});
+
+test("fixed left bounds stay fixed, and a reference outside them is left off with a note", () => {
+  const spec = {
+    type: "bar",
+    x: "week",
+    y: ["revenue"],
+    axes: { left: { min: 0, max: 100 } },
+    references: [{ y: 15, label: "Inside" }, { y: 250, label: "Outside" }],
+  };
+  const option = translate(spec, small);
+  const { left, svg } = rendered(option);
+  assert.deepEqual(left, [0, 100]);
+  assert.ok(svg.includes(">Inside  15<"));
+  assert.ok(!svg.includes("Outside"));
+  assert.deepEqual(undrawnReferences(option), [
+    "reference 'Outside' is not drawn: 250 is outside the axis bounds (0 to 100)",
+  ]);
+  const onlyMin = translate({ ...spec, axes: { left: { min: 5 } } }, small);
+  assert.equal(onlyMin.yAxis.min, 5);
+  assert.equal(typeof onlyMin.yAxis.max, "function");
+});
+
+test("reference labels use the left axis's format, not the first y column's", () => {
+  const option = translate(
+    {
+      type: "bar",
+      x: "week",
+      y: ["rate", "revenue"],
+      format: { rate: "percent", revenue: "currency" },
+      series: { rate: { type: "line", axis: "right" } },
+      references: [{ y: 15, label: "Goal" }],
+    },
+    small
+  );
+  const refs = option.series.find((s) => s.name === "__reference_lines");
+  assert.equal(refs.markLine.data[0].label.formatter, "Goal  $15");
+  const authored = translate(
+    {
+      type: "bar",
+      x: "week",
+      y: ["rate", "revenue"],
+      format: { rate: "percent", revenue: "currency" },
+      series: { rate: { type: "line", axis: "right" } },
+      axes: { left: { format: "compact" } },
+      references: [{ y: 1500, label: "Goal" }],
+    },
+    small
+  );
+  assert.equal(
+    authored.series.find((s) => s.name === "__reference_lines").markLine.data[0].label.formatter,
+    "Goal  1.5K"
+  );
+});

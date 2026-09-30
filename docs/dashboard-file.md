@@ -202,17 +202,71 @@ no points, and they never enter the legend or the tooltip, so a target does not 
 as another observed series.
 
 A value past the data widens the axis to fit it, so a goal the series has not reached
-yet is still on the chart. A category marker that the result does not contain is left
-off rather than drawn in the wrong place. It matches a category exactly, except that
-a date finds its day on a timestamp column a bar chart draws as categories. A number
-marks the category with that value, not the position. On a narrow tile a line keeps
-its label and drops the number beside it. `sqldash lint` rejects references on `pie`, `histogram`, `heatmap`, `big_number` and
-`table` tiles,
-a metric that does not exist, a trailing-window metric on a dashboard with a date range
-(a window is one value as of a day, not a value over a range), a band that is not a
-pair, and an entry with no position or more than one. The chart builder has the same
-controls under References, and switching to a chart type without axes sets the
-references aside until you switch back.
+yet is still on the chart. A bound fixed with `axes.left.min` or `max` stays put, and a
+reference outside it is not drawn; the tile names it in a note instead. On a chart
+with a right axis, references read against the left one and take its format. A
+category marker that the result does not contain is left off rather than drawn in the
+wrong place. It matches a category exactly, except that a date finds its day on a
+timestamp column a bar chart draws as categories. A number marks the category with
+that value, not the position. On a narrow tile a line keeps its label and drops the
+number beside it. `sqldash lint` rejects references on `pie`, `histogram`, `heatmap`,
+`big_number` and `table` tiles, a metric that does not exist, a trailing-window metric
+on a dashboard with a date range (a window is one value as of a day, not a value over
+a range), a band that is not a pair, and an entry with no position or more than one.
+The chart builder has the same controls under References, and switching to a chart
+type without axes sets the references aside until you switch back.
+
+## Combo charts and a second axis
+
+A `line`, `bar` or `area` chart with several `y` columns can draw each one its own
+way. `series:` is keyed by the y column, and `axes:` titles and bounds the two value
+axes:
+
+```yaml
+chart:
+  type: bar
+  x: week
+  y: [revenue, conversion_rate]
+  format: {revenue: currency, conversion_rate: percent}
+  series:
+    conversion_rate: {type: line, axis: right, label: Conversion}
+  axes:
+    left: {title: Revenue}
+    right: {title: Conversion, min: 0, max: 1}
+```
+
+| Key | Values | Default |
+|---|---|---|
+| `series.<column>.type` | `line`, `bar`, `area` | the chart's `type` |
+| `series.<column>.axis` | `left`, `right` | `left` |
+| `series.<column>.label` | the legend name | the column name |
+| `axes.<left or right>.title` | text above that axis | none |
+| `axes.<left or right>.min`, `.max` | fixed bounds | fitted to the data |
+| `axes.<left or right>.format` | any format name or currency code | the format of the first series on that axis |
+
+Everything is on one axis until a series says `axis: right`, so a plain chart never
+grows a second scale by accident. Each axis labels its ticks in its own units, and
+the tooltip formats every series with its own `format`, so revenue reads as dollars
+and a rate as a percent in the same hover. The right axis draws no gridlines of its
+own, which keeps one grid on the chart. Colors and legend order follow the order of
+`y`, the same as without `series:`, and missing values stay gaps. `stacked: true`
+stacks the bars on each axis separately and leaves lines alone. `axes:` works without
+`series:` too, so `axes: {left: {title: Share, min: 0, max: 1}}` titles and bounds a
+single-axis chart.
+
+References work on a combo chart too. They read against the left axis, stretch only
+its automatic bounds, and take its format, so a goal on a revenue axis reads in
+dollars even when a percent series comes first in `y`.
+
+`sqldash lint` explains the combinations it cannot draw: `series` or `axes` on
+`scatter`, `pie`, `histogram`, `heatmap`, `big_number` or `table`; with `group_by`
+(which names series by value, not by column); on a horizontal bar; on a metric tile
+with `compare`; a series key that is not in `y`; every column on the right axis; and
+`axes.right` with nothing on it. The chart builder shows a Series section once two or more y columns are picked,
+with the mark, axis, format and legend name per column and the axis titles. Unticking
+columns until only right-axis series are left moves them back to the left axis with
+the right axis's title, bounds and format, so the builder never saves a chart lint
+rejects.
 
 ## Relative dates
 
