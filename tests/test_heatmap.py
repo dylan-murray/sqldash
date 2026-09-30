@@ -117,30 +117,66 @@ def test_a_saved_heatmap_reloads_and_edits_one_key(tmp_path):
     assert reloaded.tiles[0].chart.y_order == ["Mon", "Tue", "Wed"]
 
 
-def test_order_integers_too_big_for_the_browser_round_trip_exactly(tmp_path):
+def _edit_chart(tmp_path, chart_yaml, change):
     doc = (
         "title: D\n"
         "source: {type: duckdb, database: ':memory:'}\n"
         "tiles:\n"
-        "  - title: Big\n"
-        "    sql: SELECT 9007199254740993::BIGINT AS k, 'a' AS r, 1 AS v\n"
-        "    chart: {type: heatmap, x: k, y: r, value: v, x_order: [9007199254740993, 7]}\n"
+        "  - title: T\n"
+        "    sql: SELECT 1 AS k, 'a' AS r, 1 AS v\n"
+        "    chart:\n" + chart_yaml
     )
     (tmp_path / "d.yaml").write_text(doc)
     store = DashboardStore(tmp_path)
     dashboard, _, etag = store.load("d")
-    wire = client_payload("d", dashboard, etag)
-    chart = json.loads(json.dumps(wire))["dashboard"]["tiles"][0]["chart"]
-    assert chart["x_order"] == ["9007199254740993", 7]
-    payload = {
-        "id": "big",
-        "title": "Big",
-        "query": "big",
-        "chart": {**chart, "aggregate": "sum"},
-    }
-    store.upsert_tile("d", payload, "SELECT 9007199254740993::BIGINT AS k, 'a' AS r, 1 AS v", etag)
-    text = (tmp_path / "d.yaml").read_text()
-    assert "x_order: [9007199254740993, 7], aggregate: sum}" in text, text
+    chart = json.loads(json.dumps(client_payload("d", dashboard, etag)))["dashboard"]["tiles"][0][
+        "chart"
+    ]
+    chart.update(change)
+    payload = {"id": "t", "title": "T", "query": "t", "chart": chart}
+    store.upsert_tile("d", payload, "SELECT 1 AS k, 'a' AS r, 1 AS v", etag)
+    return (tmp_path / "d.yaml").read_text().split("    chart:\n", 1)[1]
+
+
+def test_order_integers_past_the_browser_limit_must_be_quoted(tmp_path):
+    with pytest.raises(ValidationError, match="quote it as a string: '9007199254740993'"):
+        ChartSpec.model_validate({"type": "heatmap", "x_order": [9007199254740993]})
+    ChartSpec.model_validate({"type": "heatmap", "x_order": [9007199254740991, "9007199254740993"]})
+    (tmp_path / "d.yaml").write_text(
+        "title: D\n"
+        "source: {type: duckdb, database: ':memory:'}\n"
+        "tiles:\n"
+        "  - title: T\n"
+        "    sql: SELECT 1 AS k, 'a' AS r, 1 AS v\n"
+        "    chart: {type: heatmap, x: k, y: r, value: v, y_order: [-9_007_199_254_740_993]}\n"
+    )
+    assert any("quote it as a string" in e for e in lint_errors(tmp_path))
+
+
+def test_changing_an_order_entry_from_number_to_text_is_saved(tmp_path):
+    written = _edit_chart(
+        tmp_path,
+        "      type: heatmap\n      x: k\n      y: r\n      value: v\n      x_order: [1]\n",
+        {"x_order": ["1"]},
+    )
+    assert "x_order: ['1']" in written, written
+
+
+def test_styled_order_integers_and_either_y_spelling_keep_their_comments(tmp_path):
+    chart = (
+        "      type: heatmap\n"
+        "      x: k\n"
+        "      y: r  # rows\n"
+        "      value: v\n"
+        "      x_order:\n"
+        "        - 0x1F  # hex\n"
+        "        - 1_000  # grouped\n"
+    )
+    written = _edit_chart(tmp_path, chart, {"aggregate": "sum"})
+    assert written == chart + "      aggregate: sum\n", written
+    listed = chart.replace("      y: r  # rows\n", "      y:\n        - r  # rows\n")
+    written = _edit_chart(tmp_path, listed, {"aggregate": "sum"})
+    assert written == listed + "      aggregate: sum\n", written
 
 
 def _browser_available() -> bool:
@@ -309,3 +345,45 @@ def test_heatmaps_render_real_duckdb_cells_in_both_themes_and_on_resize(tmp_path
         else:
             assert region["yLabel"] == 180, (key, region)
             assert len(long[0]) > 25, (key, region)
+
+
+@pytest.mark.skipif(not _browser_available(), reason="playwright browser not installed")
+def test_switching_to_heatmap_before_running_saves_one_y(tmp_path):
+    from playwright.sync_api import sync_playwright
+
+    (tmp_path / "d.yaml").write_text(
+        "title: D\n"
+        "source: {type: duckdb, database: ':memory:'}\n"
+        "tiles:\n"
+        "  - title: Lines\n"
+        "    chart: {type: line, x: day, y: [hour, orders]}\n"
+        "    sql: SELECT 'mon' AS day, 9 AS hour, 3 AS orders\n"
+    )
+    app = create_app(tmp_path, allowed_hosts=["127.0.0.1", "localhost"])
+    server, thread, port = _start_server(app)
+    saves = []
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page(viewport={"width": 1300, "height": 1000})
+            page.on(
+                "response",
+                lambda r: saves.append(r.status) if r.request.method == "PUT" else None,
+            )
+            page.goto(f"http://127.0.0.1:{port}/d/d/query?tile=lines", wait_until="load")
+            page.wait_for_selector("#qb-type .seg-btn.active")
+            page.locator("#qb-type .seg-btn", has_text="Heatmap").click()
+            page.locator("#qb-add").click()
+            deadline = time.monotonic() + 10
+            while not saves:
+                assert time.monotonic() < deadline, "the tile was never saved"
+                page.wait_for_timeout(100)
+            browser.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+    assert saves == [200], saves
+    text = (tmp_path / "d.yaml").read_text()
+    assert "type: heatmap" in text, text
+    assert "hour, orders" not in text, text
+    assert not [e for e in lint_errors(tmp_path) if "one y column" in e]

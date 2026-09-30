@@ -206,12 +206,12 @@ test("big integer categories sort by their exact value", () => {
   ]);
 });
 
-test("a y authored as a one-item list keeps that shape through inference", () => {
+test("switching to a heatmap keeps one y column, with or without a result", () => {
+  const line = { type: "line", x: "day", y: ["hour", "orders"] };
+  assert.equal(pruneSpecForType(line, "heatmap").y, "hour");
+  assert.deepEqual(pruneSpecForType({ type: "heatmap", x: "a", y: "b" }, "bar").y, ["b"]);
   const r = result([["x", "string"], ["r", "string"], ["v", "integer"]], [["a", "us", 1]]);
-  assert.deepEqual(inferSpec({ type: "heatmap", x: "x", y: ["r"], value: "v" }, r).y, ["r"]);
-  assert.equal(inferSpec({ type: "heatmap", x: "x", y: "r", value: "v" }, r).y, "r");
-  const built = buildCells(r, { x: "x", y: ["r"], value: "v" });
-  assert.deepEqual(built.ys, ["us"]);
+  assert.deepEqual(buildCells(r, { x: "x", y: ["r"], value: "v" }).ys, ["us"]);
 });
 
 test("the diverging midpoint stands apart from the tile in both themes", () => {

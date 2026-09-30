@@ -85,7 +85,7 @@ weekday by hour or region by product:
 | `aggregate` | `sum`, `avg`, `count`, `min` or `max` over the rows that share a cell. |
 | `palette` | `sequential` (the default, light to the tile's color) or `diverging`. |
 | `midpoint` | Where a `diverging` palette turns from one color to the other. Defaults to 0. |
-| `x_order`, `y_order` | Categories to put first, in this order, whether or not the result has them. |
+| `x_order`, `y_order` | Categories to put first, in this order, whether or not the result has them. Quote integers larger than 9007199254740991. |
 
 Without `aggregate`, each cell must come from exactly one row, as a query that
 already groups by `x` and `y` returns. If two rows land in one cell the heatmap
@@ -100,7 +100,9 @@ is hatched too, and its tooltip says there is no value. A null `x` or `y` become
 its own `null` category, placed last.
 
 Categories keep the order the query returned them in, so an `ORDER BY` sets it;
-numeric and date columns sort ascending. `x_order` and `y_order` pin any order
+numeric and date columns sort ascending, and timestamps with a UTC offset sort
+by the instant they name, to the millisecond (two within the same millisecond
+keep the order of their text). `x_order` and `y_order` pin any order
 you want, like weekdays. A diverging palette is symmetric around its midpoint,
 so the darkest color on each side means the same distance from it.
 

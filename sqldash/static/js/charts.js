@@ -363,6 +363,7 @@ export function pruneSpecForType(spec, type) {
     if (key !== "type" && keep.has(key)) next[key] = value;
   }
   if (typeof next.y === "string" && type !== "heatmap") next.y = [next.y];
+  if (Array.isArray(next.y) && type === "heatmap") next.y = next.y[0] ?? null;
   return next;
 }
 
@@ -436,7 +437,7 @@ function inferHeatmap(s, result) {
   ].map((c) => c.name);
   if (!s.x) s.x = pool.shift() ?? null;
   if (!y) y = pool.find((name) => name !== s.x) ?? null;
-  s.y = Array.isArray(s.y) && s.y.length === 1 && s.y[0] === y ? [y] : y;
+  s.y = y;
   if (!s.value && s.aggregate !== "count") {
     const numeric = result.columns.filter(
       (c) => NUMERIC_TYPES.has(c.type) && c.name !== s.x && c.name !== y

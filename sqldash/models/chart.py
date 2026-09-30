@@ -10,7 +10,6 @@ from pydantic import (
     ConfigDict,
     Field,
     FiniteFloat,
-    field_serializer,
     field_validator,
     model_validator,
 )
@@ -160,11 +159,16 @@ class ChartSpec(BaseModel):
                 validate_format(fmt, f"format for '{column}'")
         return v
 
-    @field_serializer("x_order", "y_order", when_used="json")
-    def exact_order(self, order: list[str | int | float | bool] | None):
-        if order is None:
-            return None
-        return [str(v) if type(v) is int and abs(v) > EXACT_IN_BROWSER else v for v in order]
+    @field_validator("x_order", "y_order")
+    @classmethod
+    def check_order_integers(cls, order, info):
+        for v in order or []:
+            if isinstance(v, int) and not isinstance(v, bool) and abs(v) > EXACT_IN_BROWSER:
+                raise ValueError(
+                    f"{info.field_name} entry {v} is too big for the browser to match exactly; "
+                    f"quote it as a string: '{v}'"
+                )
+        return order
 
     @model_validator(mode="after")
     def check_midpoint(self):
