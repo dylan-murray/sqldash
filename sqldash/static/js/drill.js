@@ -108,15 +108,43 @@ function typed(value, kind) {
   return NUMBER_TEXT.test(text) ? String(Number(text)) : null;
 }
 
+const optionIndexes = new WeakMap();
+
+function optionIndex(options) {
+  let index = optionIndexes.get(options);
+  if (index) return index;
+  index = { exact: new Map(), typed: new Map() };
+  for (const option of options) {
+    if (!index.exact.has(option.value)) index.exact.set(option.value, option.value);
+    if (option.kind !== "number" && option.kind !== "boolean") continue;
+    const key = typed(option.value, option.kind);
+    const slot = `${option.kind}:${key}`;
+    if (key !== null && !index.typed.has(slot)) index.typed.set(slot, option.value);
+  }
+  optionIndexes.set(options, index);
+  return index;
+}
+
 export function matchOption(options, value, kind = "string") {
-  const exact = options.find((option) => option.value === value);
-  if (exact || kind === "string") return exact?.value;
-  const typedOptions = options.filter((o) => o.kind === "number" || o.kind === "boolean");
-  return typedOptions.find((option) => {
-    if (kind !== null && option.kind !== kind) return false;
-    const wanted = typed(value, option.kind);
-    return wanted !== null && wanted === typed(option.value, option.kind);
-  })?.value;
+  const index = optionIndex(options);
+  if (index.exact.has(value) || kind === "string") return index.exact.get(value);
+  for (const each of kind === null ? ["boolean", "number"] : [kind]) {
+    const key = typed(value, each);
+    if (key !== null && index.typed.has(`${each}:${key}`)) return index.typed.get(`${each}:${key}`);
+  }
+  return undefined;
+}
+
+const paramOptions = new WeakMap();
+
+function optionsOf(param) {
+  if (!paramOptions.has(param)) {
+    paramOptions.set(
+      param,
+      param.options.map((value, i) => ({ value, kind: param.option_kinds?.[i] ?? "string" })),
+    );
+  }
+  return paramOptions.get(param);
 }
 
 export function drillUrl(plan, row, columns, context) {
@@ -144,11 +172,7 @@ export function drillUrl(plan, row, columns, context) {
       kind = valueKind(columns[at].type);
     }
     if (param.options) {
-      const options = param.options.map((value, i) => ({
-        value,
-        kind: param.option_kinds?.[i] ?? "string",
-      }));
-      const option = matchOption(options, text, kind);
+      const option = matchOption(optionsOf(param), text, kind);
       if (option === undefined) {
         return { error: `'${text}' is not one of the options of ${plan.title}'s ${param.param} filter` };
       }

@@ -406,9 +406,20 @@ source: {type: duckdb, attach_files: true}
 filters:
   - name: rate
     type: select
-    options_sql: >-
-      SELECT CAST(x AS DECIMAL(2,1)) FROM (VALUES (1.0), (2.0)) t(x)
-      WHERE (SELECT sum(i % 7) FROM range(400000000) r(i)) > 0 ORDER BY 1
+    options_sql: "SELECT CAST(x AS DECIMAL(2,1)) FROM (VALUES (1.0), (2.0)) t(x) ORDER BY 1"
+tiles:
+  - title: Rates
+    chart: table
+    cross_filter: {rate: rate}
+    sql: "SELECT 1::DOUBLE AS rate, 1 AS n"
+""",
+    "latekind": """title: Late kind
+source: {type: duckdb, attach_files: true}
+filters:
+  - name: rate
+    type: select
+    default: '1.0'
+    options_sql: "SELECT 1.0::DECIMAL(2,1) AS rate"
 tiles:
   - title: Rates
     chart: table
@@ -876,13 +887,53 @@ def test_a_float_cell_sets_the_matching_option_an_options_sql_query_returned(pag
     assert page.locator(".toast-error").count() == 0
 
 
+def _hold_filter_options(page):
+    held = []
+
+    def route(request_route):
+        if "filter_options" in (request_route.request.post_data or ""):
+            held.append(request_route)
+        else:
+            request_route.continue_()
+
+    page.route("**/api/run", route)
+    return held
+
+
+def _release(held):
+    assert held, "the options_sql request was never made"
+    for request_route in held:
+        request_route.continue_()
+
+
 def test_a_cross_filter_click_sees_options_that_loaded_after_the_tile(page, edges):
+    held = _hold_filter_options(page)
     page.goto(f"{edges}/d/slowrates")
     _xf_tile(page, "rates").locator("button.cell-filter").wait_for()
     assert page.eval_on_selector_all('select[data-filter="rate"] option', "o => o.length") == 1
+    _release(held)
     page.wait_for_function(
         "() => document.querySelectorAll('select[data-filter=\"rate\"] option').length === 3"
     )
     _xf_tile(page, "rates").locator("button.cell-filter").click()
     page.wait_for_function("() => location.search.includes('f_rate=1.0')")
+    assert page.locator(".toast-error").count() == 0
+
+
+def test_options_that_load_later_replace_the_kinds_the_first_render_saw(page, edges):
+    held = _hold_filter_options(page)
+    page.goto(f"{edges}/d/latekind")
+    _xf_tile(page, "rates").locator("button.cell-filter").wait_for()
+    kinds = 'select[data-filter="rate"] option'
+    assert page.eval_on_selector_all(kinds, "o => o.map(e => e.dataset.kind)") == [
+        "string",
+        "string",
+    ]
+    _release(held)
+    page.wait_for_function(
+        f"() => [...document.querySelectorAll('{kinds}')].map(e => e.dataset.kind).join() "
+        "=== 'string,number'"
+    )
+    _xf_tile(page, "rates").locator("button.cell-filter").click()
+    page.wait_for_function("() => location.search.includes('f_rate=all')")
     assert page.locator(".toast-error").count() == 0

@@ -555,6 +555,7 @@ function setFilters(next) {
 }
 
 function crossFilterFrom(plan, row, columns) {
+  optionsVersion += 1;
   if (plan.errors.length) {
     toast(plan.errors[0], "error");
     return;
@@ -1003,13 +1004,13 @@ function refuseUrlValue(bind, value) {
 }
 
 const optionLists = new WeakMap();
+let optionsVersion = 0;
 
 function selectOptions(select) {
   const cached = optionLists.get(select);
-  const last = select.options[select.options.length - 1]?.value;
-  if (cached && cached.length === select.options.length && cached.last === last) return cached.list;
+  if (cached?.version === optionsVersion) return cached.list;
   const list = [...select.options].map((o) => ({ value: o.value, kind: o.dataset.kind || "string" }));
-  optionLists.set(select, { length: select.options.length, last, list });
+  optionLists.set(select, { version: optionsVersion, list });
   return list;
 }
 
@@ -1073,6 +1074,7 @@ async function loadFilterOptions() {
         opt.textContent = v;
         select.appendChild(opt);
       }
+      optionsVersion += 1;
       const option = matchOption(selectOptions(select), desired, null);
       if (option !== undefined) select.value = option;
       else if (asked !== null) refuseUrlValue(name, asked);

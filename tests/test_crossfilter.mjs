@@ -252,3 +252,31 @@ test("a numeric select and a number filter match a cell however it is spelled", 
   assert.equal(rowIsPicked(n, [2], ncols, active), false);
   assert.deepEqual(toggled(n, { n: "1" }, { n: "1.0" }, { n: "" }), { n: "" });
 });
+
+test("matching 10k cells against 10k numeric options is linear, not a scan per cell", () => {
+  const count = 10000;
+  const def = { name: "rate", type: "select", options: Array.from({ length: count }, (_, i) => i + 1) };
+  const rates = crossFilterPlan({ cross_filter: { rate: "rate" } }, [def]);
+  const rows = Array.from({ length: count }, (_, i) => [`${i + 1}.0`, i]);
+  const table = {
+    columns: [
+      { name: "rate", type: "decimal" },
+      { name: "n", type: "integer" },
+    ],
+    rows,
+  };
+  const option = { series: [{ type: "bar", name: "n", data: rows.map((r) => [r[0], r[1]]) }] };
+  const spec = { type: "bar", x: "rate", y: ["n"] };
+  const times = [];
+  let series;
+  for (let run = 0; run < 5; run++) {
+    const fresh = { ...table, rows: [...rows] };
+    const started = performance.now();
+    [series] = dimUnpicked(option, spec, fresh, rates, { rate: "1" });
+    times.push(performance.now() - started);
+  }
+  assert.equal(series.data[0].itemStyle, undefined);
+  assert.equal(series.data[1].itemStyle.opacity, 0.28);
+  const took = Math.min(...times);
+  assert.ok(took < 100, `matching took ${Math.round(took)}ms at best`);
+});
