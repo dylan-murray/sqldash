@@ -58,12 +58,16 @@ def test_lint_keeps_histogram_keys_on_histograms(tmp_path):
         "  - {title: B, chart: {type: line, measure: percent}, sql: 'SELECT 1 AS n'}\n"
         "  - {title: C, chart: {type: histogram, x: n, y: [n]}, sql: 'SELECT 1 AS n'}\n"
         "  - {title: E, chart: {type: histogram, x: n, bin_width: 5}, sql: 'SELECT 1 AS n'}\n"
+        "  - title: F\n"
+        "    chart: {type: histogram, x: n, references: [{y: 1}]}\n"
+        "    sql: SELECT 1 AS n\n"
     )
     errors = lint_errors(tmp_path)
     assert any("bins is only valid on histogram charts, not bar" in m for m in errors), errors
     assert any("measure is only valid on histogram charts, not line" in m for m in errors), errors
     assert any("tile 'c'" in m and "takes no y" in m for m in errors), errors
     assert not any("tile 'e'" in m for m in errors), errors
+    assert any("tile 'f'" in m and "not histogram" in m for m in errors), errors
 
 
 def test_a_saved_bin_definition_reloads_and_edits_one_key(tmp_path):
