@@ -7,10 +7,15 @@ SQLAlchemy's execute. That is deliberate: drivers like psycopg block inside
 canceller must be attached to the token *before* the blocking call, which
 requires the naked cursor.
 
-Snowflake authenticates through ``creator=`` (never URL auth). A lock
-serializes connection attempts so externalbrowser SSO opens at most one
-browser tab per serve session, and an auth failure pauses further attempts for
-a cooldown rather than opening one tab per pooled connection. A browser sign-in
+Snowflake authenticates through ``creator=`` (never URL auth). A lock per
+(account, user, authenticator), shared by every engine in the process, serializes
+connection attempts so externalbrowser SSO opens at most one browser tab per serve
+session whatever role, warehouse or dashboard asked, and an auth failure pauses
+further attempts for that identity for a cooldown rather than opening one tab per
+pooled connection. A failure specific to one source (a role, warehouse or database
+it cannot use) pauses only that source. An externalbrowser pool has no overflow, and the connector's
+Keychain token is kept in memory after the first read (``snowflake_tokens``), so
+later sessions do not go back to the Keychain. A browser sign-in
 runs off the request thread with a bounded wait: the driver waits for the SSO
 callback forever, and ``login_timeout`` does not cover that wait, so an
 unanswered sign-in used to hang every request behind the lock. A sign-in that
@@ -92,6 +97,27 @@ SNOWFLAKE_TIMEOUT = (
 )
 SNOWFLAKE_SESSION_GONE = frozenset({390111, 390112, 390114})
 SNOWFLAKE_CONNECTION_CLOSED = 250002
+SNOWFLAKE_SOURCE_ERRNOS = frozenset({390189, 390201})
+SNOWFLAKE_SIGNIN_ERRNOS = frozenset(
+    {250006, 250008, 250009, 251005, 251006, 251008, 251010, 251011, 251014, 251015, 251016}
+)
+SNOWFLAKE_AUTHENTICATORS = {
+    "programmatic_access_token": "pat",
+    "snowflake_jwt": "keypair",
+    "snowflake": "password",
+}
+SNOWFLAKE_SIGNIN_MARKERS = (
+    "differs from the user currently logged in",
+    "saml",
+    "identity provider",
+    "idp",
+    "incorrect username or password",
+    "authenticat",
+    "browser",
+    "sign-in",
+    "sign in",
+    "cancel",
+)
 SNOWFLAKE_RELOGIN = re.compile(r"\s*New login required to access the service\.")
 SNOWFLAKE_SESSION_ENDED = (
     " Snowflake ended this session on the server (it was aborted or expired); "
@@ -561,6 +587,151 @@ def _effective_driver(source: "Source") -> str:
     return _BARE_DIALECT_DRIVER.get(name, "")
 
 
+class Cooldown:
+    """Pause further login attempts for a while after one failed, so SSO does not
+    open a browser tab per pooled connection."""
+
+    def __init__(self) -> None:
+        self.failed_at = 0.0
+        self.failure: str | None = None
+
+    def record(self, message: str) -> None:
+        self.failed_at = time.monotonic()
+        self.failure = message
+
+    def clear(self) -> None:
+        self.failure = None
+
+    def check(self) -> None:
+        if self.failure and time.monotonic() - self.failed_at < AUTH_FAILURE_COOLDOWN:
+            raise ConnectorError(
+                self.failure + "\n(auth just failed — further attempts paused for "
+                f"{AUTH_FAILURE_COOLDOWN:.0f}s so SSO doesn't open a browser tab "
+                "per connection)"
+            )
+
+
+def signin_failed(exc: BaseException) -> bool:
+    """Whether a Snowflake login failed on who the user is, not on what the source asked for.
+
+    Only these pause every source of the identity. A role, warehouse or database the
+    user cannot use is one source's problem: sharing it rejected healthy dashboards
+    with another dashboard's role error.
+    """
+    exc = getattr(exc, "orig", None) or exc
+    errno = getattr(exc, "errno", None)
+    message = str(exc).lower()
+    if errno in SNOWFLAKE_SOURCE_ERRNOS or "does not exist or not authorized" in message:
+        return False
+    if errno in SNOWFLAKE_SIGNIN_ERRNOS:
+        return True
+    if isinstance(errno, int) and 390000 <= errno < 391000:
+        return True
+    return any(marker in message for marker in SNOWFLAKE_SIGNIN_MARKERS)
+
+
+class SignInGate:
+    """Login state one Snowflake identity shares across every engine in the process.
+
+    Engines are cached per source config, so each role, warehouse and database a
+    user picks, each warehouse-fallback probe and each dashboard directory gets its
+    own. When the lock, the pending sign-in and the failure cooldown lived in the
+    engine, every one of them raced its own browser sign-in and Keychain read. Keyed
+    on (account, user, authenticator), they wait for the one sign-in in flight, and
+    a failed sign-in pauses all of them. A failure specific to one source pauses
+    only that source's own cooldown.
+    """
+
+    def __init__(self, user: Any) -> None:
+        self.lock = threading.Lock()
+        self.user = user
+        self.cooldown = Cooldown()
+        self.inflight: SignInAttempt | None = None
+
+    def fail(self, exc: BaseException, local: Cooldown) -> ConnectorError:
+        """Record a failure at the moment it happens; nothing records it again later."""
+        message = str(exc)
+        if "differs from the user currently logged in" in message:
+            message = (
+                f"{message}\n\nattempted user: {self.user!r} — the "
+                "'username' in your source/profile must exactly match the "
+                "account you sign in with at your IdP (usually your work email)."
+            )
+        (self.cooldown if signin_failed(exc) else local).record(message)
+        return ConnectorError(message)
+
+
+class SignInAttempt(threading.Thread):
+    """One login, off the request thread, so a browser sign-in nobody completes
+    cannot hold a request (and the gate's lock) forever: the driver waits for the
+    SSO callback with no timeout of its own."""
+
+    def __init__(self, gate: SignInGate, local: Cooldown, login: Callable[[], Any]) -> None:
+        super().__init__(daemon=True, name="snowflake-signin")
+        self.gate = gate
+        self.local = local
+        self.login = login
+        self.done = threading.Event()
+        self.started = time.monotonic()
+        self.orphaned = False
+        self.conn = None
+        self.error: Exception | None = None
+        self.failure: ConnectorError | None = None
+
+    def abandoned(self) -> bool:
+        """A sign-in nobody will finish (tab closed) must not block retries until
+        restart. Its thread stays parked in the driver; it is a daemon."""
+        return not self.done.is_set() and time.monotonic() - self.started > SIGNIN_ABANDON
+
+    def run(self) -> None:
+        try:
+            self.conn = self.login()
+        except Exception as exc:
+            self.error = exc
+            if not self.orphaned:
+                self.failure = self.gate.fail(exc, self.local)
+        else:
+            self.gate.cooldown.clear()
+            self.local.clear()
+        finally:
+            self.done.set()
+        with self.gate.lock:
+            if self.gate.inflight is self:
+                self.gate.inflight = None
+            unclaimed = self.orphaned and self.conn is not None
+        if unclaimed:
+            with contextlib.suppress(Exception):
+                self.conn.close()
+
+
+_SIGNIN_GATES: dict[tuple[str, str, str], SignInGate] = {}
+_SIGNIN_GATES_LOCK = threading.Lock()
+
+
+def snowflake_auth_method(kwargs: dict[str, Any]) -> str:
+    """How these connect kwargs log in. Password and key-pair logins send no
+    ``authenticator``, so it alone would put them on one gate, and a wrong
+    password would pause a key pair that works. A private key wins over any
+    ``authenticator``, as it does in the connector (SNOWFLAKE_JWT)."""
+    if kwargs.get("private_key_file") or kwargs.get("private_key"):
+        return "keypair"
+    authenticator = str(kwargs.get("authenticator") or "").lower()
+    if authenticator:
+        return SNOWFLAKE_AUTHENTICATORS.get(authenticator, authenticator)
+    return "password"
+
+
+def signin_gate(kwargs: dict[str, Any]) -> SignInGate:
+    """The process-wide gate for the identity these Snowflake connect kwargs log in as."""
+    key = (
+        str(kwargs.get("account") or "").lower(),
+        str(kwargs.get("user") or "").lower(),
+        snowflake_auth_method(kwargs),
+    )
+    with _SIGNIN_GATES_LOCK:
+        return _SIGNIN_GATES.setdefault(key, SignInGate(kwargs.get("user")))
+
+
 def build_engine(source: "Source", base_dir: Path | None) -> "Engine":
     """Construct the pooled engine for a source; secrets resolve here, at build time."""
     common = {
@@ -589,97 +760,90 @@ def build_engine(source: "Source", base_dir: Path | None) -> "Engine":
                 "pip install 'sqlalchemy>=2.0,<2.1'"
             ) from exc
         kwargs = snowflake_connect_kwargs(source, resolve_credentials(source))
-        connect_lock = threading.Lock()
-        auth_failure = {"at": 0.0, "message": None}
         browser = kwargs.get("authenticator") == "externalbrowser"
-        signin: dict[str, Any] = {"attempt": None}
+        if browser:
+            from sqldash.connectors.snowflake_tokens import (  # noqa: PLC0415 — optional [snowflake] extra
+                remember_snowflake_tokens,
+            )
 
-        class Attempt(threading.Thread):
-            """One login, off the request thread, so a browser sign-in nobody
-            completes cannot hold a request (and the connect lock) forever: the
-            driver waits for the SSO callback with no timeout of its own."""
+            remember_snowflake_tokens()
+            common["max_overflow"] = 0
+        gate = signin_gate(kwargs)
+        local = Cooldown()
+        mine: dict[str, SignInAttempt | None] = {"attempt": None}
+        mine_lock = threading.Lock()
 
-            def __init__(self):
-                super().__init__(daemon=True, name="snowflake-signin")
-                self.done = threading.Event()
-                self.started = time.monotonic()
-                self.orphaned = False
-                self.conn = None
-                self.error: Exception | None = None
+        def login():
+            return snowflake.connector.connect(**kwargs)
 
-            def run(self):
-                try:
-                    self.conn = snowflake.connector.connect(**kwargs)
-                except Exception as exc:
-                    self.error = exc
-                finally:
-                    self.done.set()
-                with connect_lock:
-                    unclaimed = self.orphaned and self.conn is not None
-                if unclaimed:
-                    with contextlib.suppress(Exception):
-                        self.conn.close()
+        def take(attempt=None):
+            """Hand this engine's finished (or given) attempt to exactly one caller."""
+            with mine_lock:
+                own = mine["attempt"]
+                if own is None or (attempt is not None and own is not attempt):
+                    return None
+                if attempt is None and not (own.done.is_set() or own.orphaned):
+                    return None
+                mine["attempt"] = None
+                return own
 
-        def failed(exc):
-            message = str(exc)
-            if "differs from the user currently logged in" in message:
-                message = (
-                    f"{message}\n\nattempted user: {kwargs.get('user')!r} — the "
-                    "'username' in your source/profile must exactly match the "
-                    "account you sign in with at your IdP (usually your work email)."
-                )
-            auth_failure["at"] = time.monotonic()
-            auth_failure["message"] = message
-            return ConnectorError(message)
+        def claim(attempt):
+            if attempt.error is not None:
+                raise (attempt.failure or ConnectorError(str(attempt.error))) from attempt.error
+            return attempt.conn
 
-        def abandoned(attempt):
-            # A sign-in nobody will finish (tab closed) must not block retries
-            # until restart. Its thread stays parked in the driver; it is a daemon.
-            return not attempt.done.is_set() and time.monotonic() - attempt.started > SIGNIN_ABANDON
+        def finished_connection():
+            own = take()
+            if own is not None and not own.orphaned and own.error is None:
+                return own.conn
+            return None
 
         def connect():
-            waiting = signin["attempt"]
+            conn = finished_connection()
+            if conn is not None:
+                return conn
+            waiting = gate.inflight
             if (
                 waiting is not None
-                and not abandoned(waiting)
+                and not waiting.abandoned()
                 and not waiting.done.wait(SIGNIN_RECHECK)
             ):
                 raise ConnectorError(SIGNIN_PENDING)
-            with connect_lock:
-                if (
-                    auth_failure["message"]
-                    and time.monotonic() - auth_failure["at"] < AUTH_FAILURE_COOLDOWN
-                ):
-                    raise ConnectorError(
-                        auth_failure["message"]
-                        + "\n(auth just failed — further attempts paused for "
-                        f"{AUTH_FAILURE_COOLDOWN:.0f}s so SSO doesn't open a browser tab "
-                        "per connection)"
-                    )
+            with gate.lock:
+                conn = finished_connection()
+                if conn is not None:
+                    return conn
+                gate.cooldown.check()
+                local.check()
                 if not browser:
                     try:
-                        conn = snowflake.connector.connect(**kwargs)
+                        conn = login()
                     except Exception as exc:
-                        raise failed(exc) from exc
-                    auth_failure["message"] = None
+                        raise gate.fail(exc, local) from exc
+                    gate.cooldown.clear()
+                    local.clear()
                     return conn
-                attempt = signin["attempt"]
-                if attempt is not None and abandoned(attempt):
-                    attempt.orphaned = True
-                    attempt = None
-                if attempt is None:
-                    attempt = signin["attempt"] = Attempt()
-                    attempt.start()
-                    finished = attempt.done.wait(SIGNIN_WAIT)
-                else:
-                    finished = attempt.done.wait(SIGNIN_RECHECK)
-                if not finished:
+                inflight = gate.inflight
+                if inflight is not None and inflight.abandoned():
+                    inflight.orphaned = True
+                    gate.inflight = inflight = None
+                if inflight is not None:
+                    if not inflight.done.wait(SIGNIN_RECHECK):
+                        raise ConnectorError(SIGNIN_PENDING)
+                    own = take(inflight)
+                    if own is not None:
+                        return claim(own)
+                    gate.cooldown.check()
+                attempt = gate.inflight = SignInAttempt(gate, local, login)
+                with mine_lock:
+                    mine["attempt"] = attempt
+                attempt.start()
+                if not attempt.done.wait(SIGNIN_WAIT):
                     raise ConnectorError(SIGNIN_PENDING)
-                signin["attempt"] = None
-                if attempt.error is not None:
-                    raise failed(attempt.error) from attempt.error
-                auth_failure["message"] = None
-                return attempt.conn
+                own = take(attempt)
+                if own is None:
+                    raise ConnectorError(SIGNIN_PENDING)
+                return claim(own)
 
         engine = create_engine("snowflake://sqldash", creator=connect, **common)
 
